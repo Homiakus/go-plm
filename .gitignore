@@ -1,0 +1,56 @@
+# === Dependencies ===
+node_modules/
+frontend/node_modules/
+
+# === Build output ===
+dist/
+frontend/dist/
+cmd/plm/frontend-dist/
+cmd/plm/frontend-dist2/
+
+# === Go ===
+*.exe
+*.test
+*.out
+*.prof
+vendor/
+
+# === IDE ===
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# === Logs ===
+*.log
+inbox/
+
+# === Secrets & Config ===
+*.hash
+*.env
+*.env.local
+config/admin.hash
+
+# === Coverage & Test ===
+coverage/
+*.coverprofile
+test-results/
+
+# === Obsidian ===
+.obsidian/workspace.json
+
+# === Cache ===
+__pycache__/
+.cache/
+
+# === Temp ===
+tmp/
+temp/
+*.tmp
+
+# === OS ===
+Desktop.ini
+$RECYCLE.BIN/
