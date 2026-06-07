@@ -200,8 +200,16 @@ func (d *DB) RebuildIndex(ctx context.Context, objects []object.Object) error {
 	tx.ExecContext(ctx, "DELETE FROM relations")
 	tx.ExecContext(ctx, "DELETE FROM objects")
 
+	now := time.Now().UTC().Format(time.RFC3339)
 	for _, obj := range objects {
-		if err := d.UpsertObject(ctx, obj); err != nil {
+		metaJSON, _ := json.Marshal(obj.Metadata)
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO objects (id, project, class, sequence, version, revision, state, title, metadata, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, string(obj.ID), obj.Project, string(obj.Class), obj.Sequence,
+			obj.Version, obj.Revision, string(obj.State), obj.Title,
+			string(metaJSON), now, now)
+		if err != nil {
 			return err
 		}
 	}
