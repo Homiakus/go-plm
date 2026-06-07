@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import api from "./bindings/api";
 import type {
+  Diagnostic,
   ObjectDTO,
   TreeNodeDTO,
   TreeRequest,
@@ -11,7 +12,6 @@ import LandingPage from "./components/LandingPage";
 import Sidebar from "./components/Sidebar";
 import Toolbar from "./components/Toolbar";
 import ObjectEditor from "./components/ObjectEditor";
-import MarkdownEditor from "./components/MarkdownEditor";
 import BOMViewer from "./components/BOMViewer";
 import SearchPanel from "./components/SearchPanel";
 import StatusBar from "./components/StatusBar";
@@ -21,6 +21,7 @@ import { getStandardCommands } from "./components/CommandPalette";
 import SafeDeleteDialog from "./components/SafeDeleteDialog";
 import StandardPartsCenter from "./components/StandardPartsCenter";
 import GitChangesPanel from "./components/GitChangesPanel";
+import ReleaseDashboard from "./components/ReleaseDashboard";
 
 export default function App() {
   const [project, setProject] = useState<ProjectInfo | null>(null);
@@ -107,9 +108,9 @@ export default function App() {
     }
   };
 
-  const confirmDelete = async (objectId: string, _force: boolean) => {
+  const confirmDelete = async (objectId: string, force: boolean) => {
     try {
-      await api.deleteObject(objectId);
+      await api.deleteObject(objectId, force);
       setDeleteTarget(null);
       await refreshTree();
       if (selectedId === objectId) {
@@ -125,13 +126,15 @@ export default function App() {
   const handleCreateObject = async (
     classType: string,
     title: string,
-    metadata?: Record<string, unknown>
+    metadata?: Record<string, unknown>,
+    parentId?: string
   ) => {
     try {
       const resp = await api.createObject({
         project_path: project?.root || ".",
         class: classType,
         title,
+        parent_object_id: parentId,
         metadata,
       });
       await refreshTree();
@@ -165,19 +168,25 @@ export default function App() {
   if (!project && !loading) {
     return (
       <LandingPage
-        onCreateProject={async (name, title) => {
+        onCreateProject={async (path, code, title) => {
           setLoading(true);
           try {
-            await api.projectInfo(); // will fail, so init via API
+            await api.createProject({ path, code, title });
             await loadProject();
-          } catch {
-            // Project needs CLI init — reload
-            window.location.reload();
+          } catch (e: any) {
+            setError(e.message || "Failed to create project");
+            setLoading(false);
           }
         }}
         onOpenProject={async (path) => {
           setLoading(true);
-          window.location.href = `/?path=${encodeURIComponent(path)}`;
+          try {
+            await api.openProject(path);
+            await loadProject();
+          } catch (e: any) {
+            setError(e.message || "Failed to open project");
+            setLoading(false);
+          }
         }}
       />
     );
@@ -211,7 +220,7 @@ export default function App() {
       {showWizard && (
         <CreateWizard
           onCreate={async (cls, title, meta, parentId) => {
-            await handleCreateObject(cls, title, meta);
+            await handleCreateObject(cls, title, meta, parentId);
             setShowWizard(false);
           }}
           onCancel={() => setShowWizard(false)}
@@ -242,7 +251,9 @@ export default function App() {
             const msg = prompt("Checkpoint message:");
             if (msg) await api.createCheckpoint(msg);
           },
-          onCreateRelease: () => {},
+          onGitChanges: () => setViewMode("gitchanges"),
+          onRelease: () => selectedObject && setViewMode("release"),
+          onStandardParts: () => setViewMode("stdparts"),
         })}
       />
 
@@ -282,6 +293,10 @@ export default function App() {
             <StandardPartsCenter />
           ) : viewMode === "gitchanges" ? (
             <GitChangesPanel />
+          ) : viewMode === "release" && selectedObject ? (
+            <div className="flex-1 overflow-y-auto p-6">
+              <ReleaseDashboard object={selectedObject} />
+            </div>
           ) : viewMode === "bom" && selectedId ? (
             <BOMViewer rootId={selectedId} onSelect={selectObject} />
           ) : selectedObject ? (
@@ -289,6 +304,10 @@ export default function App() {
               object={selectedObject}
               onTransition={(t) => handleTransition(selectedObject!.id, t)}
               onViewBOM={() => handleViewBOM(selectedObject!.id)}
+              onObjectUpdated={async () => {
+                await refreshTree();
+                if (selectedId) await selectObject(selectedId);
+              }}
             />
           ) : (
             <WelcomeScreen
@@ -298,11 +317,75 @@ export default function App() {
             />
           )}
         </main>
+
+        <RightInspector object={selectedObject} />
       </div>
 
       {/* Status bar */}
       <StatusBar project={project} selectedObject={selectedObject} />
     </div>
+  );
+}
+
+function RightInspector({ object }: { object: ObjectDTO | null }) {
+  const [diagnostics, setDiagnostics] = useState<Diagnostic[] | null>(null);
+
+  useEffect(() => {
+    setDiagnostics(null);
+    if (!object) return;
+    api.validateObject(object.id).then(setDiagnostics).catch(() => setDiagnostics(null));
+  }, [object?.id]);
+
+  return (
+    <aside className="w-80 border-l border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-950 overflow-y-auto">
+      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+        <h2 className="text-sm font-semibold">Inspector</h2>
+      </div>
+      {!object ? (
+        <div className="p-4 text-sm text-gray-400">Select an object to inspect properties and readiness.</div>
+      ) : (
+        <div className="p-4 space-y-5 text-sm">
+          <section>
+            <div className="text-xs font-semibold uppercase text-gray-400 mb-2">Object</div>
+            <div className="font-medium truncate">{object.title}</div>
+            <code className="block mt-1 text-xs text-blue-600 dark:text-blue-400 break-all">{object.id}</code>
+            <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+              <span className="text-gray-400">Class</span><span>{object.class}</span>
+              <span className="text-gray-400">State</span><span>{object.state}</span>
+              <span className="text-gray-400">Revision</span><span>{object.revision}</span>
+            </div>
+          </section>
+
+          <section>
+            <div className="text-xs font-semibold uppercase text-gray-400 mb-2">Readiness</div>
+            {diagnostics == null ? (
+              <div className="text-gray-400">Checking...</div>
+            ) : diagnostics.length === 0 ? (
+              <div className="text-green-600 dark:text-green-400">Ready</div>
+            ) : (
+              <div className="text-amber-600 dark:text-amber-400">
+                {diagnostics.filter((d) => d.severity === "blocker").length} blockers, {diagnostics.filter((d) => d.severity !== "blocker").length} warnings
+              </div>
+            )}
+          </section>
+
+          <section>
+            <div className="text-xs font-semibold uppercase text-gray-400 mb-2">Relations</div>
+            <div>{object.relations?.length || 0} outgoing</div>
+          </section>
+
+          <section>
+            <div className="text-xs font-semibold uppercase text-gray-400 mb-2">Files</div>
+            <div>{object.artifacts?.length || 0} attached</div>
+          </section>
+
+          <section>
+            <div className="text-xs font-semibold uppercase text-gray-400 mb-2">Path</div>
+            <code className="text-xs break-all">objects/{object.id}/{object.id}.md</code>
+          </section>
+        </div>
+      )}
+    </aside>
   );
 }
 

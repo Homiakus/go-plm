@@ -112,7 +112,10 @@ func TestSearchObjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(ids) == 0 {
-		t.Skip("FTS5 may need content sync")
+		t.Fatal("expected FTS5 search to return indexed object")
+	}
+	if ids[0] != obj.ID {
+		t.Fatalf("search returned %v, want %s", ids, obj.ID)
 	}
 }
 

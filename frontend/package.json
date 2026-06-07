@@ -10,7 +10,6 @@
     "lint": "eslint src --ext ts,tsx"
   },
   "dependencies": {
-    "@wailsio/runtime": "^3.0.0-alpha.0",
     "lucide-react": "^0.400.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

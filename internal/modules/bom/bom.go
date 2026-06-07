@@ -48,8 +48,8 @@ func New(objects ObjectReader, relations RelationReader) *Service {
 // Returns rows with level/depth information for tree rendering.
 func (s *Service) GetStructured(ctx context.Context, root object.ID) ([]BOMRow, error) {
 	var rows []BOMRow
-	visited := make(map[string]bool)
-	if err := s.walkBOM(ctx, string(root), visited, 1.0, 0, &rows, ""); err != nil {
+	path := make(map[string]bool)
+	if err := s.walkBOM(ctx, string(root), path, 1.0, 0, &rows, ""); err != nil {
 		return nil, err
 	}
 	return rows, nil
@@ -84,13 +84,14 @@ func (s *Service) GetFlat(ctx context.Context, root object.ID) ([]BOMRow, error)
 }
 
 // walkBOM recursively traverses `contains` relations.
-func (s *Service) walkBOM(ctx context.Context, fromID string, visited map[string]bool,
+func (s *Service) walkBOM(ctx context.Context, fromID string, path map[string]bool,
 	parentQty float64, level int, rows *[]BOMRow, position string) error {
 
-	if visited[fromID] {
+	if path[fromID] {
 		return fmt.Errorf("bom: cycle detected at %s", fromID)
 	}
-	visited[fromID] = true
+	path[fromID] = true
+	defer delete(path, fromID)
 
 	rels, err := s.Relations.ListRelations(ctx, object.ID(fromID))
 	if err != nil {
@@ -139,7 +140,7 @@ func (s *Service) walkBOM(ctx context.Context, fromID string, visited map[string
 
 		// Recurse into child if it's an assembly
 		if childClass == string(object.ClassAssembly) {
-			if err := s.walkBOM(ctx, rel.ToID, visited, effectiveQty, level+1, rows, pos); err != nil {
+			if err := s.walkBOM(ctx, rel.ToID, path, effectiveQty, level+1, rows, pos); err != nil {
 				return err
 			}
 		}

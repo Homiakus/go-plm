@@ -10,6 +10,56 @@ export interface ObjectDTO {
   state: string;
   title: string;
   metadata?: Record<string, unknown>;
+  relations?: RelationDTO[];
+  artifacts?: ArtifactDTO[];
+}
+
+export interface RelationDTO {
+  to: string;
+  type: string;
+  quantity?: number;
+  unit?: string;
+}
+
+export interface ArtifactDTO {
+  id: string;
+  kind: string;
+  role: string;
+  path: string;
+  original_name?: string;
+  checksum?: string;
+  size_bytes?: number;
+  generated: boolean;
+  required: boolean;
+  status: string;
+}
+
+export interface ObjectDocumentDTO {
+  object_id: string;
+  frontmatter: string;
+  body: string;
+}
+
+export interface UpdateObjectDocumentRequest {
+  object_id: string;
+  frontmatter: string;
+  body: string;
+}
+
+export interface ProjectCreateRequest {
+  path: string;
+  code: string;
+  title: string;
+}
+
+export interface HistoryEntry {
+  event_id?: string;
+  time?: string;
+  actor?: string;
+  type?: string;
+  object_id?: string;
+  payload?: Record<string, unknown>;
+  [key: string]: unknown;
 }
 
 export interface TreeNodeDTO {

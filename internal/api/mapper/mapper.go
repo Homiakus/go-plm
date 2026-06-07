@@ -10,31 +10,83 @@ import (
 
 // ObjectToDTO converts a domain Object to an ObjectDTO.
 func ObjectToDTO(obj object.Object) dto.ObjectDTO {
+	relations := make([]dto.RelationDTO, len(obj.Relations))
+	for i, rel := range obj.Relations {
+		relations[i] = dto.RelationDTO{
+			ToID:     rel.ToID,
+			Type:     rel.Type,
+			Quantity: rel.Quantity,
+			Unit:     rel.Unit,
+		}
+	}
+	artifacts := make([]dto.ArtifactDTO, len(obj.Artifacts))
+	for i, artifact := range obj.Artifacts {
+		artifacts[i] = dto.ArtifactDTO{
+			ID:           artifact.ID,
+			Kind:         artifact.Kind,
+			Role:         artifact.Role,
+			Path:         artifact.Path,
+			OriginalName: artifact.OriginalName,
+			Checksum:     artifact.Checksum,
+			SizeBytes:    artifact.SizeBytes,
+			Generated:    artifact.Generated,
+			Required:     artifact.Required,
+			Status:       artifact.Status,
+		}
+	}
 	return dto.ObjectDTO{
-		ID:       string(obj.ID),
-		Project:  obj.Project,
-		Class:    string(obj.Class),
-		Sequence: obj.Sequence,
-		Version:  obj.Version,
-		Revision: obj.Revision,
-		State:    string(obj.State),
-		Title:    obj.Title,
-		Metadata: obj.Metadata,
+		ID:        string(obj.ID),
+		Project:   obj.Project,
+		Class:     string(obj.Class),
+		Sequence:  obj.Sequence,
+		Version:   obj.Version,
+		Revision:  obj.Revision,
+		State:     string(obj.State),
+		Title:     obj.Title,
+		Metadata:  obj.Metadata,
+		Relations: relations,
+		Artifacts: artifacts,
 	}
 }
 
 // DTOToObject converts an ObjectDTO to a domain Object.
 func DTOToObject(d dto.ObjectDTO) object.Object {
+	relations := make([]object.RelationRef, len(d.Relations))
+	for i, rel := range d.Relations {
+		relations[i] = object.RelationRef{
+			ToID:     rel.ToID,
+			Type:     rel.Type,
+			Quantity: rel.Quantity,
+			Unit:     rel.Unit,
+		}
+	}
+	artifacts := make([]object.ArtifactRef, len(d.Artifacts))
+	for i, artifact := range d.Artifacts {
+		artifacts[i] = object.ArtifactRef{
+			ID:           artifact.ID,
+			Kind:         artifact.Kind,
+			Role:         artifact.Role,
+			Path:         artifact.Path,
+			OriginalName: artifact.OriginalName,
+			Checksum:     artifact.Checksum,
+			SizeBytes:    artifact.SizeBytes,
+			Generated:    artifact.Generated,
+			Required:     artifact.Required,
+			Status:       artifact.Status,
+		}
+	}
 	return object.Object{
-		ID:       object.ID(d.ID),
-		Project:  d.Project,
-		Class:    object.Class(d.Class),
-		Sequence: d.Sequence,
-		Version:  d.Version,
-		Revision: d.Revision,
-		State:    object.State(d.State),
-		Title:    d.Title,
-		Metadata: d.Metadata,
+		ID:        object.ID(d.ID),
+		Project:   d.Project,
+		Class:     object.Class(d.Class),
+		Sequence:  d.Sequence,
+		Version:   d.Version,
+		Revision:  d.Revision,
+		State:     object.State(d.State),
+		Title:     d.Title,
+		Metadata:  d.Metadata,
+		Relations: relations,
+		Artifacts: artifacts,
 	}
 }
 

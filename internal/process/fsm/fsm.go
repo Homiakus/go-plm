@@ -30,12 +30,17 @@ type Definition struct {
 
 // Machine executes transitions on a Definition.
 type Machine struct {
-	Def Definition
+	Def        Definition
+	transCache map[string]*Transition // O(1) lookup cache
 }
 
 // New creates a Machine from a Definition.
 func New(def Definition) *Machine {
-	return &Machine{Def: def}
+	m := &Machine{Def: def, transCache: make(map[string]*Transition, len(def.Transitions))}
+	for i := range def.Transitions {
+		m.transCache[def.Transitions[i].Name] = &def.Transitions[i]
+	}
+	return m
 }
 
 // NewFromYAML parses a YAML process definition.
@@ -109,21 +114,11 @@ func (m *Machine) EffectsFor(transitionName string) []string {
 
 // GetTransition returns the Transition definition for a given name, or nil.
 func (m *Machine) GetTransition(name string) *Transition {
-	for i := range m.Def.Transitions {
-		if m.Def.Transitions[i].Name == name {
-			return &m.Def.Transitions[i]
-		}
-	}
-	return nil
+	return m.transCache[name]
 }
 
 func (m *Machine) getTransition(name string) *Transition {
-	for i := range m.Def.Transitions {
-		if m.Def.Transitions[i].Name == name {
-			return &m.Def.Transitions[i]
-		}
-	}
-	return nil
+	return m.transCache[name]
 }
 
 // StandardObjectLifecycle returns the default object lifecycle definition.

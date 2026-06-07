@@ -15,6 +15,51 @@ type ObjectDTO struct {
 	State     string         `json:"state"`
 	Title     string         `json:"title"`
 	Metadata  map[string]any `json:"metadata,omitempty"`
+	Relations []RelationDTO  `json:"relations,omitempty"`
+	Artifacts []ArtifactDTO  `json:"artifacts,omitempty"`
+}
+
+// RelationDTO is a frontend representation of an object relation.
+type RelationDTO struct {
+	ToID     string   `json:"to"`
+	Type     string   `json:"type"`
+	Quantity *float64 `json:"quantity,omitempty"`
+	Unit     string   `json:"unit,omitempty"`
+}
+
+// ArtifactDTO is a frontend representation of an attached file/artifact.
+type ArtifactDTO struct {
+	ID           string `json:"id"`
+	Kind         string `json:"kind"`
+	Role         string `json:"role"`
+	Path         string `json:"path"`
+	OriginalName string `json:"original_name,omitempty"`
+	Checksum     string `json:"checksum,omitempty"`
+	SizeBytes    int64  `json:"size_bytes,omitempty"`
+	Generated    bool   `json:"generated"`
+	Required     bool   `json:"required"`
+	Status       string `json:"status"`
+}
+
+// ObjectDocumentDTO contains editable Markdown source split into frontmatter/body.
+type ObjectDocumentDTO struct {
+	ObjectID    string `json:"object_id"`
+	Frontmatter string `json:"frontmatter"`
+	Body        string `json:"body"`
+}
+
+// UpdateObjectDocumentRequest updates the Markdown source of an object.
+type UpdateObjectDocumentRequest struct {
+	ObjectID    string `json:"object_id"`
+	Frontmatter string `json:"frontmatter"`
+	Body        string `json:"body"`
+}
+
+// ProjectCreateRequest creates a new project on disk.
+type ProjectCreateRequest struct {
+	Path  string `json:"path"`
+	Code  string `json:"code"`
+	Title string `json:"title"`
 }
 
 // CreateObjectRequest is the request to create a new object.
@@ -63,8 +108,8 @@ type BOMRequest struct {
 
 // BOMResponse contains BOM rows.
 type BOMResponse struct {
-	RootID string       `json:"root_id"`
-	Rows   []BOMRowDTO  `json:"rows"`
+	RootID string      `json:"root_id"`
+	Rows   []BOMRowDTO `json:"rows"`
 }
 
 // BOMRowDTO is a BOM row for the frontend.

@@ -18,7 +18,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"strconv"
 
 	"github.com/Homiakus/go-plm/internal/app/service"
 )
@@ -60,6 +62,14 @@ func runServer(path string) {
 		os.Exit(1)
 	}
 
+	// Port: PLM_PORT env var or default 8470
+	port := 8470
+	if p := os.Getenv("PLM_PORT"); p != "" {
+		if n, err := strconv.Atoi(p); err == nil && n > 0 && n < 65536 {
+			port = n
+		}
+	}
+
 	srv, err := NewServer(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
@@ -67,13 +77,17 @@ func runServer(path string) {
 	}
 	defer srv.Shutdown()
 
-	if err := srv.Start(8470); err != nil {
+	if err := srv.Start(port); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Block forever
-	select {}
+	// Graceful shutdown on SIGINT/SIGTERM (Ctrl+C)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt)
+	<-sigCh
+	fmt.Println("\nShutting down...")
+	srv.Shutdown()
 }
 
 func runInit() {

@@ -5,7 +5,7 @@
 Every engineering object (Part, Assembly, Drawing, Work Instruction, Release) is a **Markdown file with YAML frontmatter** on disk. Git tracks history. Finite state machines manage lifecycles. SQLite provides a rebuildable search index.
 
 ```
-No server. No database. No cloud.
+No remote server. No central database. No cloud.
 Just files. Just Git. Just Markdown.
 ```
 
@@ -19,7 +19,7 @@ Just files. Just Git. Just Markdown.
 | **Git-native** | Every change is a commit. Every release is a tag. No `git` knowledge required. |
 | **FSM-driven** | Object lifecycles managed by configurable finite state machines with guard validation. |
 | **Index is Rebuildable** | SQLite index can be deleted and rebuilt from Markdown files at any time. |
-| **Desktop-first** | Wails v2 + React + Vditor. Single binary. No Docker, no server. |
+| **Desktop-first** | Single Go binary serving an embedded React UI on loopback. No Docker, no remote service. |
 
 ---
 
@@ -47,7 +47,7 @@ make test
 make lint
 ```
 
-### Build with frontend (requires Wails + npm)
+### Build with frontend (requires npm)
 
 ```bash
 make frontend-install
@@ -60,7 +60,7 @@ make build
 ## Architecture
 
 ```
-cmd/plm/              # Wails v2 entry point
+cmd/plm/              # CLI entry point and local HTTP shell
 
 internal/
 ├── core/             # Domain model (zero deps)
@@ -115,6 +115,8 @@ internal/
 
 frontend/src/         # React + TypeScript + Vditor
 ```
+
+The application starts a loopback-only HTTP server at `127.0.0.1:8470`. The embedded UI calls `/api` via JSON-RPC 2.0. The API endpoint is protected by a per-process HttpOnly SameSite token cookie, a method allowlist, and local-origin checks.
 
 
 
@@ -209,7 +211,7 @@ Examples:
 | **Git Integration** | ✅ Done | Status, checkpoint, tag |
 | **Media Attachments** | ✅ Done | 6 artifact kinds, auto-routing |
 | **Project Tree** | ✅ Spec | Icons, status dots, thumbnails |
-| **Desktop UI** | 🔜 Next | Wails v2 + React + Vditor |
+| **Desktop UI** | ✅ Done | Embedded React + TypeScript + Vite UI |
 | **Shop Floor** | 📋 Planned | Build records, QR tokens |
 | **Procurement** | 📋 Planned | Buy list, ERP export |
 
@@ -222,11 +224,17 @@ make build
 # Run all tests
 make test
 
+# Run race detector (requires CGO)
+make test-race
+
 # Test with coverage
 make test-cover
 
 # Lint
 make lint
+
+# Vulnerability scan (requires govulncheck)
+make security
 
 # Benchmark
 make bench
@@ -235,6 +243,7 @@ make bench
 make frontend-install
 make frontend-dev
 make frontend-build
+make frontend-audit
 ```
 
 ## Tech Stack
@@ -242,16 +251,16 @@ make frontend-build
 | Layer | Technology |
 |-------|-----------|
 | Language | Go 1.26 |
-| Desktop Shell | Wails v2 |
+| Desktop Shell | Go local HTTP shell on 127.0.0.1 |
 | Frontend | React 19 + TypeScript + Vite + Tailwind |
 | Editor | Vditor (WYSIWYG + instant render) |
 | Database | SQLite (modernc.org/sqlite, no CGO) |
 | Search | FTS5 |
 | Git | go-git v5 |
 | YAML | gopkg.in/yaml.v3 |
-| IPC | HTTP JSON-RPC on localhost |
+| IPC | Token-protected HTTP JSON-RPC on localhost |
 | Tests | Go test + testify |
-| CI | GitHub Actions |
+| CI | GitHub Actions: Go tests/vet/race/govulncheck, frontend build/audit |
 
 ## Concurrency
 

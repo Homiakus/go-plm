@@ -3,23 +3,89 @@ package wailsapi
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+	"sync"
 
 	"github.com/Homiakus/go-plm/internal/api/dto"
 	"github.com/Homiakus/go-plm/internal/app/service"
 	"github.com/Homiakus/go-plm/internal/core/diagnostic"
 	"github.com/Homiakus/go-plm/internal/core/object"
 	"github.com/Homiakus/go-plm/internal/modules/bom"
+	"github.com/Homiakus/go-plm/internal/validation/engine"
+	"github.com/Homiakus/go-plm/internal/validation/rules"
 )
 
 // API is the Wails-bound API surface.
 // Every exported method becomes a callable frontend function.
 type API struct {
+	mu  sync.RWMutex
 	app *service.App
 }
 
 // NewAPI creates a Wails API from an App instance.
 func NewAPI(app *service.App) *API {
 	return &API{app: app}
+}
+
+// Close releases resources owned by the current app.
+func (a *API) Close() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.app == nil {
+		return nil
+	}
+	return a.app.Close()
+}
+
+// OpenProject opens an existing PLM project and makes it the active workspace.
+func (a *API) OpenProject(path string) (map[string]any, error) {
+	next, err := service.Open(path)
+	if err != nil {
+		return nil, err
+	}
+
+	a.mu.Lock()
+	prev := a.app
+	a.app = next
+	a.mu.Unlock()
+
+	if prev != nil {
+		_ = prev.Close()
+	}
+	return a.projectInfo(), nil
+}
+
+// CreateProject creates a new PLM project and opens it.
+func (a *API) CreateProject(req dto.ProjectCreateRequest) (map[string]any, error) {
+	if strings.TrimSpace(req.Path) == "" {
+		return nil, fmt.Errorf("project path is required")
+	}
+	code := strings.TrimSpace(req.Code)
+	if code == "" {
+		code = "demo"
+	}
+	title := strings.TrimSpace(req.Title)
+	if title == "" {
+		title = code
+	}
+
+	next, err := service.InitProject(req.Path, code, title)
+	if err != nil {
+		return nil, err
+	}
+
+	a.mu.Lock()
+	prev := a.app
+	a.app = next
+	a.mu.Unlock()
+
+	if prev != nil {
+		_ = prev.Close()
+	}
+	return a.projectInfo(), nil
 }
 
 // ── Objects ──
@@ -44,9 +110,16 @@ func (a *API) SearchObjects(req dto.SearchRequest) ([]dto.SearchResult, error) {
 	return a.app.Qry.SearchObjects(context.Background(), req)
 }
 
-// DeleteObject removes an object by ID.
-func (a *API) DeleteObject(id string) error {
-	return a.app.Repo.DeleteObject(context.Background(), object.ID(id))
+// DeleteObject removes an object by ID after where-used checks unless force is true.
+func (a *API) DeleteObject(id string, force bool) error {
+	usedBy, err := a.app.Cmd.DeleteObjectSafe(context.Background(), object.ID(id), force)
+	if err != nil {
+		return err
+	}
+	if len(usedBy) > 0 {
+		return fmt.Errorf("object %s is referenced by %s", id, strings.Join(usedBy, ", "))
+	}
+	return nil
 }
 
 // ── Lifecycle Transitions ──
@@ -162,6 +235,12 @@ func (a *API) Stats() (map[string]int, error) {
 
 // ProjectInfo returns project configuration.
 func (a *API) ProjectInfo() map[string]any {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.projectInfo()
+}
+
+func (a *API) projectInfo() map[string]any {
 	return map[string]any{
 		"code":        a.app.Config.Project.Code,
 		"title":       a.app.Config.Project.Title,
@@ -169,6 +248,64 @@ func (a *API) ProjectInfo() map[string]any {
 		"version":     a.app.Config.Project.Version,
 		"root":        a.app.Root,
 	}
+}
+
+// GetObjectDocument returns editable Markdown frontmatter/body for an object.
+func (a *API) GetObjectDocument(objectID string) (*dto.ObjectDocumentDTO, error) {
+	fm, body, err := a.app.Repo.GetObjectDocument(context.Background(), object.ID(objectID))
+	if err != nil {
+		return nil, err
+	}
+	return &dto.ObjectDocumentDTO{
+		ObjectID:    objectID,
+		Frontmatter: string(fm),
+		Body:        string(body),
+	}, nil
+}
+
+// UpdateObjectDocument saves Markdown frontmatter/body through the command layer.
+func (a *API) UpdateObjectDocument(req dto.UpdateObjectDocumentRequest) error {
+	return a.app.Cmd.UpdateObjectDocument(context.Background(), req)
+}
+
+// ValidateObject runs the default validation rules for one object.
+func (a *API) ValidateObject(objectID string) ([]diagnostic.Diagnostic, error) {
+	obj, err := a.app.Repo.GetObject(context.Background(), object.ID(objectID))
+	if err != nil {
+		return nil, err
+	}
+	all, errs := a.app.Repo.ListObjects(context.Background())
+	if len(errs) > 0 {
+		return nil, errs[0]
+	}
+	validator := engine.NewEngine(rules.DefaultRegistry())
+	return validator.ValidateObject(context.Background(), obj, all)
+}
+
+// GetObjectHistory returns parsed JSONL history entries for an object.
+func (a *API) GetObjectHistory(objectID string) ([]map[string]any, error) {
+	data, err := os.ReadFile(a.app.Repo.HistoryPath(object.ID(objectID)))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []map[string]any{}, nil
+		}
+		return nil, err
+	}
+	var result []map[string]any
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var item map[string]any
+		if err := json.Unmarshal([]byte(line), &item); err == nil {
+			result = append(result, item)
+		}
+	}
+	if result == nil {
+		return []map[string]any{}, nil
+	}
+	return result, nil
 }
 
 // GetNamingInfo returns naming context for ID generation.

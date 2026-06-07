@@ -47,9 +47,9 @@ func TestGetStructured(t *testing.T) {
 
 func TestGetStructuredNested(t *testing.T) {
 	objects := mockObjects{
-		"a-asm-0100-v1.0":  {ID: "a-asm-0100-v1.0", Class: object.ClassAssembly, Title: "Top"},
-		"a-asm-0101-v1.0":  {ID: "a-asm-0101-v1.0", Class: object.ClassAssembly, Title: "Sub"},
-		"a-prt-0001-v1.0":  {ID: "a-prt-0001-v1.0", Class: object.ClassPart, Title: "Screw"},
+		"a-asm-0100-v1.0": {ID: "a-asm-0100-v1.0", Class: object.ClassAssembly, Title: "Top"},
+		"a-asm-0101-v1.0": {ID: "a-asm-0101-v1.0", Class: object.ClassAssembly, Title: "Sub"},
+		"a-prt-0001-v1.0": {ID: "a-prt-0001-v1.0", Class: object.ClassPart, Title: "Screw"},
 	}
 	relations := mockRelations{
 		"a-asm-0100-v1.0": {
@@ -94,6 +94,31 @@ func TestDetectCycle(t *testing.T) {
 	}
 	if len(diags) == 0 {
 		t.Error("expected cycle detection")
+	}
+}
+
+func TestGetStructuredAllowsSharedSubassembly(t *testing.T) {
+	objects := mockObjects{
+		"a-asm-0100-v1.0": {ID: "a-asm-0100-v1.0", Class: object.ClassAssembly},
+		"a-asm-0101-v1.0": {ID: "a-asm-0101-v1.0", Class: object.ClassAssembly},
+		"a-asm-0102-v1.0": {ID: "a-asm-0102-v1.0", Class: object.ClassAssembly},
+		"a-prt-0001-v1.0": {ID: "a-prt-0001-v1.0", Class: object.ClassPart},
+	}
+	relations := mockRelations{
+		"a-asm-0100-v1.0": {
+			{ToID: "a-asm-0101-v1.0", Type: "contains"},
+			{ToID: "a-asm-0102-v1.0", Type: "contains"},
+		},
+		"a-asm-0101-v1.0": {{ToID: "a-prt-0001-v1.0", Type: "contains"}},
+		"a-asm-0102-v1.0": {{ToID: "a-prt-0001-v1.0", Type: "contains"}},
+	}
+
+	rows, err := New(objects, relations).GetStructured(context.Background(), "a-asm-0100-v1.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 4 {
+		t.Fatalf("expected shared subassembly DAG to produce 4 rows, got %d", len(rows))
 	}
 }
 

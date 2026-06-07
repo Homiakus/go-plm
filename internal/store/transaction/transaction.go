@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Op types.
@@ -47,11 +48,11 @@ type RenameOp struct {
 
 // Plan describes an atomic unit of filesystem work.
 type Plan struct {
-	ID      string      `json:"id"`
-	Writes  []WriteOp   `json:"writes,omitempty"`
-	Copies  []CopyOp    `json:"copies,omitempty"`
-	Deletes []DeleteOp  `json:"deletes,omitempty"`
-	Renames []RenameOp  `json:"renames,omitempty"`
+	ID      string     `json:"id"`
+	Writes  []WriteOp  `json:"writes,omitempty"`
+	Copies  []CopyOp   `json:"copies,omitempty"`
+	Deletes []DeleteOp `json:"deletes,omitempty"`
+	Renames []RenameOp `json:"renames,omitempty"`
 }
 
 // Manager executes transaction plans atomically.
@@ -70,6 +71,9 @@ func (m *Manager) Execute(ctx context.Context, p Plan) error {
 	if p.ID == "" {
 		return errors.New("transaction: plan.ID must not be empty")
 	}
+	if err := validateID(p.ID); err != nil {
+		return err
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -80,7 +84,11 @@ func (m *Manager) Execute(ctx context.Context, p Plan) error {
 	}
 
 	// Phase 1: prepare temp files
-	tempWrites := make(map[string]string) // target path -> temp path
+	type preparedWrite struct {
+		target string
+		tmp    string
+	}
+	tempWrites := make([]preparedWrite, 0, len(p.Writes))
 	for i, w := range p.Writes {
 		tmp := filepath.Join(workDir, fmt.Sprintf("write_%d.tmp", i))
 		if err := os.WriteFile(tmp, w.Content, 0644); err != nil {
@@ -89,7 +97,7 @@ func (m *Manager) Execute(ctx context.Context, p Plan) error {
 		if err := os.MkdirAll(filepath.Dir(w.Path), 0755); err != nil {
 			return fmt.Errorf("transaction: mkdir %s: %w", filepath.Dir(w.Path), err)
 		}
-		tempWrites[w.Path] = tmp
+		tempWrites = append(tempWrites, preparedWrite{target: w.Path, tmp: tmp})
 	}
 
 	// Phase 2: copy files
@@ -107,10 +115,10 @@ func (m *Manager) Execute(ctx context.Context, p Plan) error {
 	}
 
 	// Phase 3: atomic rename (commit)
-	for target, tmp := range tempWrites {
-		if err := os.Rename(tmp, target); err != nil {
+	for _, w := range tempWrites {
+		if err := os.Rename(w.tmp, w.target); err != nil {
 			// Cleanup temp — already committed writes stay
-			return fmt.Errorf("transaction: rename %s -> %s: %w", tmp, target, err)
+			return fmt.Errorf("transaction: rename %s -> %s: %w", w.tmp, w.target, err)
 		}
 	}
 
@@ -175,6 +183,9 @@ func (m *Manager) Recover(ctx context.Context) ([]RecoveryItem, error) {
 
 // Rollback removes the work directory of an incomplete transaction.
 func (m *Manager) Rollback(ctx context.Context, id string) error {
+	if err := validateID(id); err != nil {
+		return err
+	}
 	return os.RemoveAll(filepath.Join(m.TxDir, id))
 }
 
@@ -191,11 +202,24 @@ func NewID() string {
 	return "tx-" + hex.EncodeToString(b)
 }
 
+func validateID(id string) error {
+	if id == "" {
+		return errors.New("transaction: id must not be empty")
+	}
+	if id == "." || id == ".." || filepath.IsAbs(id) || strings.ContainsAny(id, `/\`) {
+		return fmt.Errorf("transaction: unsafe id %q", id)
+	}
+	if clean := filepath.Clean(id); clean != id {
+		return fmt.Errorf("transaction: unsafe id %q", id)
+	}
+	return nil
+}
+
 // IsCommitted checks if a transaction work directory has a commit marker.
 func IsCommitted(workDir string) bool {
 	_, err := os.Stat(filepath.Join(workDir, "committed"))
 	return err == nil
 }
 
-// Must helpers for tests.
-var _ = json.Marshal // ensure json import is used
+// Plan types carry json struct tags for diagnostics/recovery reporting.
+var _ = json.Marshal

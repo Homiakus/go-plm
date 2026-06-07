@@ -9,6 +9,9 @@ import {
   FolderTree,
   Sun,
   Moon,
+  Tag,
+  Nut,
+  GitBranch,
 } from "lucide-react";
 
 interface ToolbarProps {
@@ -53,20 +56,36 @@ export default function Toolbar({
 
         {/* View modes */}
         <div className="flex items-center gap-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-0.5">
-          {(["browse", "bom", "search"] as ViewMode[]).map((mode) => (
+          {(["browse", "bom", "search", "release", "stdparts", "gitchanges"] as ViewMode[]).map((mode) => (
             <button
               key={mode}
               onClick={() => onViewModeChange(mode)}
+              disabled={mode === "release" && !selectedObject}
               className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
                 viewMode === mode
                   ? "bg-white dark:bg-gray-700 shadow-sm text-blue-600 dark:text-blue-400"
+                  : mode === "release" && !selectedObject
+                  ? "text-gray-300 cursor-not-allowed"
                   : "text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
               }`}
             >
               {mode === "browse" && <FileText size={14} className="inline mr-1" />}
               {mode === "bom" && <Table size={14} className="inline mr-1" />}
               {mode === "search" && <Search size={14} className="inline mr-1" />}
-              {mode === "browse" ? "Browse" : mode === "bom" ? "BOM" : "Search"}
+              {mode === "release" && <Tag size={14} className="inline mr-1" />}
+              {mode === "stdparts" && <Nut size={14} className="inline mr-1" />}
+              {mode === "gitchanges" && <GitBranch size={14} className="inline mr-1" />}
+              {mode === "browse"
+                ? "Browse"
+                : mode === "bom"
+                ? "BOM"
+                : mode === "search"
+                ? "Search"
+                : mode === "release"
+                ? "Release"
+                : mode === "stdparts"
+                ? "Std Parts"
+                : "Changes"}
             </button>
           ))}
         </div>

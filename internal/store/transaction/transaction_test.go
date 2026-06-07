@@ -171,6 +171,18 @@ func TestRecoverAndRollback(t *testing.T) {
 	}
 }
 
+func TestRollbackRejectsUnsafeID(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(filepath.Join(dir, ".plm", "transactions"))
+
+	if err := m.Rollback(context.Background(), ".."); err == nil {
+		t.Fatal("expected unsafe rollback id error")
+	}
+	if err := m.Execute(context.Background(), Plan{ID: "..", Writes: []WriteOp{{Path: filepath.Join(dir, "x"), Content: []byte("x")}}}); err == nil {
+		t.Fatal("expected unsafe execute id error")
+	}
+}
+
 func TestIsCommitted(t *testing.T) {
 	dir := t.TempDir()
 	if IsCommitted(dir) {

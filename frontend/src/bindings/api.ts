@@ -1,8 +1,7 @@
 // ── go-plm API bindings ──
 // Auto-detects the best transport:
-//   1. Wails runtime (desktop mode)
-//   2. HTTP JSON-RPC (standalone server mode)
-//   3. Mock data (development without backend)
+//   1. HTTP JSON-RPC (embedded local server mode)
+//   2. Mock data (development without backend)
 
 import type {
   ObjectDTO,
@@ -20,27 +19,22 @@ import type {
   ReleaseResponse,
   ProjectInfo,
   TransitionDef,
+  ObjectDocumentDTO,
+  UpdateObjectDocumentRequest,
+  ProjectCreateRequest,
+  HistoryEntry,
 } from "../types";
 
 // ── Transport detection ──
 
-type Transport = "wails" | "http" | "mock";
-
-let transport: Transport = "mock";
+type Transport = "http" | "mock";
 
 function detectTransport(): Transport {
-  // Check for Wails
-  try {
-    if ((window as any).go?.plm?.api) return "wails";
-  } catch {}
-
-  // Check if HTTP API is reachable
-  try {
-    return "http"; // will be confirmed on first call
-  } catch {}
-
-  return "mock";
+  const params = new URLSearchParams(window.location.search);
+  return params.get("mock") === "1" ? "mock" : "http";
 }
+
+const transport: Transport = detectTransport();
 
 // ── JSON-RPC 2.0 HTTP client ──
 
@@ -162,16 +156,12 @@ function classIcon(c: string): string {
 // ── Unified call dispatcher ──
 
 async function call<T>(method: string, ...args: unknown[]): Promise<T> {
-  // Try HTTP first (it's the default standalone mode)
-  try {
-    return await callHTTP<T>(method, ...args);
-  } catch (err: any) {
-    // If HTTP fails and we're in mock mode, use mock
-    if (transport === "mock") {
-      return mockCall<T>(method, args);
-    }
-    throw err;
+  if (transport === "mock") {
+    return mockCall<T>(method, args);
   }
+
+  // Try HTTP first (it's the default standalone mode)
+  return callHTTP<T>(method, ...args);
 }
 
 function mockCall<T>(method: string, args: unknown[]): T {
@@ -211,6 +201,29 @@ function mockCall<T>(method: string, args: unknown[]): T {
       ] as T;
     case "ProjectInfo":
       return { code: "demo", title: "Demo Project", description: "A demonstration PLM project", version: 1, root: "." } as T;
+    case "GetNamingInfo":
+      return { project_code: "demo", standard: "v10", pattern: "[project]-[class]-[sequence]-v[major].[minor]" } as T;
+    case "GetNextSequence":
+      return 1 as T;
+    case "OpenProject":
+      return { code: "demo", title: "Demo Project", description: "A demonstration PLM project", version: 1, root: args[0] as string } as T;
+    case "CreateProject": {
+      const req = args[0] as ProjectCreateRequest;
+      return { code: req.code, title: req.title, description: "", version: 1, root: req.path } as T;
+    }
+    case "GetObjectDocument": {
+      const id = args[0] as string;
+      const obj = mockObjects.find((o) => o.id === id)!;
+      return {
+        object_id: id,
+        frontmatter: `id: ${obj.id}\nproject: ${obj.project}\nclass: ${obj.class}\nsequence: ${obj.sequence}\nversion: ${obj.version}\nrevision: ${obj.revision}\nstate: ${obj.state}\ntitle: ${obj.title}\nmetadata: ${JSON.stringify(obj.metadata || {})}`,
+        body: `# ${obj.title}\n\nDescribe the engineering object here.\n`,
+      } as T;
+    }
+    case "ValidateObject":
+      return [] as T;
+    case "GetObjectHistory":
+      return [] as T;
     case "Stats":
       return { objects: 5, relations: 4, artifacts: 2 } as T;
     case "CheckReleaseReadiness":
@@ -226,11 +239,15 @@ function mockCall<T>(method: string, args: unknown[]): T {
 // ── Exported API ──
 
 export const api = {
+  // Projects
+  openProject: (path: string) => call<ProjectInfo>("OpenProject", path),
+  createProject: (req: ProjectCreateRequest) => call<ProjectInfo>("CreateProject", req),
+
   // Objects
   listObjects: () => call<ObjectDTO[]>("ListObjects"),
   getObject: (id: string) => call<ObjectDTO | null>("GetObject", id),
   createObject: (req: CreateObjectRequest) => call<CreateObjectResponse>("CreateObject", req),
-  deleteObject: (id: string) => call<void>("DeleteObject", id),
+  deleteObject: (id: string, force = false) => call<void>("DeleteObject", id, force),
   searchObjects: (req: SearchRequest) => call<SearchResult[]>("SearchObjects", req),
 
   // Transitions
@@ -259,6 +276,14 @@ export const api = {
 
   // Project
   projectInfo: () => call<ProjectInfo>("ProjectInfo"),
+  getNamingInfo: () => call<{ project_code: string; standard: string; pattern: string }>("GetNamingInfo"),
+  getNextSequence: (classType: string) => call<number>("GetNextSequence", classType),
+
+  // Document source
+  getObjectDocument: (objectId: string) => call<ObjectDocumentDTO>("GetObjectDocument", objectId),
+  updateObjectDocument: (req: UpdateObjectDocumentRequest) => call<void>("UpdateObjectDocument", req),
+  validateObject: (objectId: string) => call<Diagnostic[]>("ValidateObject", objectId),
+  getObjectHistory: (objectId: string) => call<HistoryEntry[]>("GetObjectHistory", objectId),
 
   // Attachments
   attachArtifact: (objectId: string, localPath: string, kind: string, role: string) =>

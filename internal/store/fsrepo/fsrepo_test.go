@@ -105,6 +105,29 @@ func TestDeleteObject(t *testing.T) {
 	}
 }
 
+func TestRejectUnsafeObjectID(t *testing.T) {
+	repo := setupRepo(t)
+	ctx := context.Background()
+
+	marker := filepath.Join(repo.Root, "marker.txt")
+	if err := os.WriteFile(marker, []byte("keep"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.DeleteObject(ctx, ".."); err == nil {
+		t.Fatal("expected unsafe id error")
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("unsafe delete touched project root: %v", err)
+	}
+	if err := repo.SaveObject(ctx, object.Object{ID: "..\\config", Class: object.ClassPart, Title: "bad"}); err == nil {
+		t.Fatal("expected unsafe save id error")
+	}
+	if repo.Exists("..") {
+		t.Fatal("unsafe id should never exist")
+	}
+}
+
 func TestGetObjectNotFound(t *testing.T) {
 	repo := setupRepo(t)
 	_, err := repo.GetObject(context.Background(), "nonexistent-v1.0")

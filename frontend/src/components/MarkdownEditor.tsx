@@ -5,10 +5,12 @@ import type { ObjectDTO } from "../types";
 
 interface MarkdownEditorProps {
   object: ObjectDTO;
+  initialFrontmatter?: string;
+  initialBody?: string;
   onSave: (frontmatter: string, body: string) => Promise<void>;
 }
 
-export default function MarkdownEditor({ object, onSave }: MarkdownEditorProps) {
+export default function MarkdownEditor({ object, initialFrontmatter, initialBody, onSave }: MarkdownEditorProps) {
   const [mode, setMode] = useState<"edit" | "preview" | "split">("edit");
   const [frontmatter, setFrontmatter] = useState("");
   const [body, setBody] = useState("# " + object.title + "\n\n");
@@ -18,9 +20,8 @@ export default function MarkdownEditor({ object, onSave }: MarkdownEditorProps) 
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
-  // Generate frontmatter from object
   useEffect(() => {
-    const fm = `id: ${object.id}
+    const fm = initialFrontmatter || `id: ${object.id}
 project: ${object.project}
 class: ${object.class}
 sequence: ${object.sequence || ""}
@@ -34,7 +35,9 @@ metadata:${object.metadata ? "\n" + Object.entries(object.metadata).map(([k, v])
 relations: []
 artifacts: []`;
     setFrontmatter(fm);
-  }, [object]);
+    setBody(initialBody ?? "# " + object.title + "\n\n");
+    setSaved(true);
+  }, [object.id, initialFrontmatter, initialBody]);
 
   // Autosave with 5-second debounce
   const debouncedSave = useCallback(() => {
@@ -44,8 +47,7 @@ artifacts: []`;
       setSaving(true);
       setError(null);
       try {
-        const fullFm = "---\n" + frontmatter + "\n---";
-        await onSave(fullFm, body);
+        await onSave(frontmatter, body);
         setSaved(true);
       } catch (e: any) {
         setError(e.message);
@@ -59,13 +61,15 @@ artifacts: []`;
     if (!saved) debouncedSave();
   }, [frontmatter, body]);
 
+  // Cleanup timer on unmount
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
+
   const handleManualSave = async () => {
     if (timerRef.current) clearTimeout(timerRef.current);
     setSaving(true);
     setError(null);
     try {
-      const fullFm = "---\n" + frontmatter + "\n---";
-      await onSave(fullFm, body);
+      await onSave(frontmatter, body);
       setSaved(true);
     } catch (e: any) {
       setError(e.message);

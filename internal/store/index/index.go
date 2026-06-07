@@ -27,7 +27,7 @@ func Open(path string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("index: open: %w", err)
 	}
-	db.SetMaxOpenConns(1) // SQLite single-writer
+	db.SetMaxOpenConns(4) // SQLite: allow concurrent readers in WAL mode
 
 	idx := &DB{db: db}
 	if err := idx.migrate(context.Background()); err != nil {
@@ -58,6 +58,7 @@ func (d *DB) migrate(ctx context.Context) error {
 		state       TEXT NOT NULL DEFAULT 'draft',
 		title       TEXT NOT NULL,
 		metadata    TEXT,
+		body        TEXT DEFAULT '',
 		created_at  TEXT,
 		updated_at  TEXT
 	);
@@ -91,8 +92,11 @@ func (d *DB) migrate(ctx context.Context) error {
 		content='objects', content_rowid='rowid'
 	);
 	`
-	_, err := d.db.ExecContext(ctx, schema)
-	return err
+	if _, err := d.db.ExecContext(ctx, schema); err != nil {
+		return err
+	}
+	_, _ = d.db.ExecContext(ctx, "ALTER TABLE objects ADD COLUMN body TEXT DEFAULT ''")
+	return nil
 }
 
 // UpsertObject inserts or updates an object in the index.
@@ -100,7 +104,13 @@ func (d *DB) UpsertObject(ctx context.Context, obj object.Object) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	metaJSON, _ := json.Marshal(obj.Metadata)
 
-	_, err := d.db.ExecContext(ctx, `
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO objects (id, project, class, sequence, version, revision, state, title, metadata, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
@@ -109,7 +119,13 @@ func (d *DB) UpsertObject(ctx context.Context, obj object.Object) error {
 	`, string(obj.ID), obj.Project, string(obj.Class), obj.Sequence,
 		obj.Version, obj.Revision, string(obj.State), obj.Title,
 		string(metaJSON), now, now)
-	return err
+	if err != nil {
+		return err
+	}
+	if err := rebuildFTS(ctx, tx); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // DeleteObject removes an object and its relations/artifacts from the index.
@@ -123,6 +139,9 @@ func (d *DB) DeleteObject(ctx context.Context, id object.ID) error {
 	tx.ExecContext(ctx, "DELETE FROM relations WHERE from_id=? OR to_id=?", string(id), string(id))
 	tx.ExecContext(ctx, "DELETE FROM artifacts WHERE object_id=?", string(id))
 	tx.ExecContext(ctx, "DELETE FROM objects WHERE id=?", string(id))
+	if err := rebuildFTS(ctx, tx); err != nil {
+		return err
+	}
 
 	return tx.Commit()
 }
@@ -216,6 +235,9 @@ func (d *DB) RebuildIndex(ctx context.Context, objects []object.Object) error {
 	tx.ExecContext(ctx, "DELETE FROM objects")
 
 	if len(objects) == 0 {
+		if err := rebuildFTS(ctx, tx); err != nil {
+			return err
+		}
 		return tx.Commit()
 	}
 
@@ -249,6 +271,10 @@ func (d *DB) RebuildIndex(ctx context.Context, objects []object.Object) error {
 		}
 	}
 
+	if err := rebuildFTS(ctx, tx); err != nil {
+		return err
+	}
+
 	return tx.Commit()
 }
 
@@ -265,4 +291,13 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+type ftsRebuilder interface {
+	ExecContext(context.Context, string, ...interface{}) (sql.Result, error)
+}
+
+func rebuildFTS(ctx context.Context, exec ftsRebuilder) error {
+	_, err := exec.ExecContext(ctx, "INSERT INTO fts_objects(fts_objects) VALUES('rebuild')")
+	return err
 }

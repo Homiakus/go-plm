@@ -1,6 +1,6 @@
 // Command Palette (Ctrl+K) — keyboard-first command interface
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Search, Plus, FileText, Table, Tag, GitBranch, RefreshCw, Database } from "lucide-react";
+import { Search, Plus, Table, Tag, GitBranch, RefreshCw, Database, Nut } from "lucide-react";
 
 interface Command {
   id: string;
@@ -126,7 +126,9 @@ export function getStandardCommands(callbacks: {
   onRefresh: () => void;
   onRebuildIndex: () => void;
   onGitCheckpoint: () => void;
-  onCreateRelease: () => void;
+  onGitChanges: () => void;
+  onRelease: () => void;
+  onStandardParts: () => void;
 }): Command[] {
   return [
     { id: "create-object", label: "Create Object...", icon: <Plus size={16} />, shortcut: "Ctrl+N", category: "Objects", action: callbacks.onCreateObject },
@@ -135,7 +137,9 @@ export function getStandardCommands(callbacks: {
     { id: "rebuild-index", label: "Rebuild Search Index", icon: <RefreshCw size={16} />, category: "Index", action: callbacks.onRebuildIndex },
     { id: "refresh", label: "Refresh Project", icon: <RefreshCw size={16} />, shortcut: "F5", category: "Project", action: callbacks.onRefresh },
     { id: "git-checkpoint", label: "Create Git Checkpoint", icon: <GitBranch size={16} />, category: "Git", action: callbacks.onGitCheckpoint },
-    { id: "create-release", label: "Create Release Package", icon: <Tag size={16} />, category: "Release", action: callbacks.onCreateRelease },
+    { id: "git-changes", label: "Show Changes", icon: <GitBranch size={16} />, category: "Git", action: callbacks.onGitChanges },
+    { id: "release-dashboard", label: "Open Release Dashboard", icon: <Tag size={16} />, category: "Release", action: callbacks.onRelease },
+    { id: "standard-parts", label: "Open Standard Parts", icon: <Nut size={16} />, category: "Standard Parts", action: callbacks.onStandardParts },
     { id: "rebuild", label: "Rebuild Index from Files", icon: <Database size={16} />, category: "Index", action: callbacks.onRebuildIndex },
   ];
 }

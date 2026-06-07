@@ -12,6 +12,7 @@ const (
 	ObjectCreated         Type = "object.created"
 	ObjectDeleted         Type = "object.deleted"
 	ObjectDuplicated      Type = "object.duplicated"
+	DocumentUpdated       Type = "document.updated"
 	MetadataUpdated       Type = "metadata.updated"
 	RelationAdded         Type = "relation.added"
 	RelationRemoved       Type = "relation.removed"

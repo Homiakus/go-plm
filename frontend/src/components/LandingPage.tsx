@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { FolderOpen, PlusCircle, Clock, Settings } from "lucide-react";
 
 interface LandingPageProps {
-  onCreateProject: (name: string, title: string) => void;
+  onCreateProject: (path: string, code: string, title: string) => void;
   onOpenProject: (path: string) => void;
 }
 
@@ -16,6 +16,7 @@ interface RecentProject {
 export default function LandingPage({ onCreateProject, onOpenProject }: LandingPageProps) {
   const [newName, setNewName] = useState("");
   const [newTitle, setNewTitle] = useState("");
+  const [newPath, setNewPath] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [openPath, setOpenPath] = useState("");
   const [recent, setRecent] = useState<RecentProject[]>([]);
@@ -29,11 +30,12 @@ export default function LandingPage({ onCreateProject, onOpenProject }: LandingP
   }, []);
 
   const handleCreate = () => {
-    if (newName.trim()) {
-      onCreateProject(newName.trim(), newTitle.trim() || newName.trim());
+    if (newPath.trim() && newName.trim()) {
+      onCreateProject(newPath.trim(), newName.trim(), newTitle.trim() || newName.trim());
       setShowCreate(false);
       setNewName("");
       setNewTitle("");
+      setNewPath("");
     }
   };
 
@@ -62,12 +64,20 @@ export default function LandingPage({ onCreateProject, onOpenProject }: LandingP
               <h2 className="font-semibold mb-4">Create New Project</h2>
               <input
                 type="text"
-                placeholder="Project name (e.g., my-project)"
+                placeholder="Project folder path (e.g., C:\\projects\\demo)"
+                value={newPath}
+                onChange={(e) => setNewPath(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleCreate()}
+                className="w-full px-4 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                autoFocus
+              />
+              <input
+                type="text"
+                placeholder="Project code (e.g., demo)"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleCreate()}
                 className="w-full px-4 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                autoFocus
               />
               <input
                 type="text"
@@ -80,7 +90,7 @@ export default function LandingPage({ onCreateProject, onOpenProject }: LandingP
               <div className="flex gap-3">
                 <button
                   onClick={handleCreate}
-                  disabled={!newName.trim()}
+                  disabled={!newPath.trim() || !newName.trim()}
                   className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white font-medium rounded-lg transition-colors"
                 >
                   Create Project

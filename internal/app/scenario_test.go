@@ -9,17 +9,18 @@ import (
 	"github.com/Homiakus/go-plm/internal/api/dto"
 	"github.com/Homiakus/go-plm/internal/app/command"
 	"github.com/Homiakus/go-plm/internal/app/query"
+	"github.com/Homiakus/go-plm/internal/app/service"
 	"github.com/Homiakus/go-plm/internal/core/object"
 	"github.com/Homiakus/go-plm/internal/gitops"
 	"github.com/Homiakus/go-plm/internal/modules/bom"
 	"github.com/Homiakus/go-plm/internal/modules/release"
 	"github.com/Homiakus/go-plm/internal/naming"
 	"github.com/Homiakus/go-plm/internal/process/fsm"
-	rulespkg "github.com/Homiakus/go-plm/internal/validation/rules"
 	"github.com/Homiakus/go-plm/internal/store/fsrepo"
 	"github.com/Homiakus/go-plm/internal/store/index"
 	"github.com/Homiakus/go-plm/internal/store/transaction"
 	"github.com/Homiakus/go-plm/internal/validation/engine"
+	rulespkg "github.com/Homiakus/go-plm/internal/validation/rules"
 )
 
 func setup(t *testing.T) (*command.ObjectService, *query.ObjectService, func()) {
@@ -314,6 +315,64 @@ transitions:
 	t.Log("FSM: OK")
 }
 
+func TestTransitionGuardsBlockMissingRequiredMetadata(t *testing.T) {
+	cmd, _, cleanup := setup(t)
+	defer cleanup()
+	ctx := context.Background()
+	cmd.FSM = fsm.New(fsm.StandardObjectLifecycle())
+
+	created, err := cmd.CreateObject(ctx, dto.CreateObjectRequest{
+		Class: "prt", Title: "Guarded Part", Metadata: map[string]any{"unit": "pcs"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.UpdateObject(ctx, object.ID(created.ObjectID), "Guarded Part", map[string]any{"unit": "pcs"}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := cmd.RunTransition(ctx, dto.TransitionRequest{ObjectID: created.ObjectID, Transition: "submit_review"})
+	if err == nil {
+		t.Fatal("expected required_metadata guard to block transition")
+	}
+	if resp == nil || len(resp.Diagnostics) == 0 {
+		t.Fatal("expected blocking diagnostics")
+	}
+}
+
+func TestServiceOpenRecoversSequencesFromObjects(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "demo")
+	app, err := service.InitProject(root, "demo", "Demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := app.Cmd.CreateObject(context.Background(), dto.CreateObjectRequest{
+		Class: "prt", Title: "First", Metadata: map[string]any{"unit": "pcs", "make_buy": "make"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ObjectID != "demo-prt-0001-v1.0" {
+		t.Fatalf("first id = %s", first.ObjectID)
+	}
+	app.Close()
+
+	reopened, err := service.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	second, err := reopened.Cmd.CreateObject(context.Background(), dto.CreateObjectRequest{
+		Class: "prt", Title: "Second", Metadata: map[string]any{"unit": "pcs", "make_buy": "make"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ObjectID != "demo-prt-0002-v1.0" {
+		t.Fatalf("second id = %s, want demo-prt-0002-v1.0", second.ObjectID)
+	}
+}
+
 // TestTransactionFullCycle: write + copy + rename + delete
 func TestTransactionFullCycle(t *testing.T) {
 	dir := t.TempDir()
@@ -323,7 +382,7 @@ func TestTransactionFullCycle(t *testing.T) {
 	os.WriteFile(src, []byte("source"), 0644)
 
 	plan := transaction.Plan{
-		ID: transaction.NewID(),
+		ID:      transaction.NewID(),
 		Writes:  []transaction.WriteOp{{Path: filepath.Join(dir, "new.md"), Content: []byte("# Doc")}},
 		Copies:  []transaction.CopyOp{{From: src, To: filepath.Join(dir, "copy.txt")}},
 		Renames: []transaction.RenameOp{{From: src, To: filepath.Join(dir, "moved.txt")}},

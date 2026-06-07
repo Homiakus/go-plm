@@ -53,6 +53,9 @@ func (r *Repository) GetObject(ctx context.Context, id object.ID) (object.Object
 	if err := ctx.Err(); err != nil {
 		return object.Object{}, err
 	}
+	if err := validateObjectID(id); err != nil {
+		return object.Object{}, err
+	}
 
 	path := r.ObjectPath(id)
 	data, err := os.ReadFile(path)
@@ -76,18 +79,44 @@ func (r *Repository) GetObject(ctx context.Context, id object.ID) (object.Object
 	return obj, nil
 }
 
+// GetObjectDocument reads an object's frontmatter and Markdown body.
+func (r *Repository) GetObjectDocument(ctx context.Context, id object.ID) ([]byte, []byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	if err := validateObjectID(id); err != nil {
+		return nil, nil, err
+	}
+
+	path := r.ObjectPath(id)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil, fmt.Errorf("fsrepo: object %s not found", id)
+		}
+		return nil, nil, fmt.Errorf("fsrepo: read %s: %w", path, err)
+	}
+
+	fm, body, err := splitFrontmatter(data)
+	if err != nil {
+		return nil, nil, fmt.Errorf("fsrepo: parse frontmatter %s: %w", path, err)
+	}
+	return fm, body, nil
+}
+
 // SaveObject writes an object to disk atomically via the transaction layer.
 func (r *Repository) SaveObject(ctx context.Context, obj object.Object) error {
+	if err := validateObjectID(obj.ID); err != nil {
+		return err
+	}
 	if err := obj.ValidateIdentity(); err != nil {
 		return err
 	}
 
-	fm, err := yaml.Marshal(obj)
+	content, err := objectMarkdown(obj)
 	if err != nil {
-		return fmt.Errorf("fsrepo: marshal object: %w", err)
+		return err
 	}
-
-	content := buildMarkdown(fm, "")
 	mdPath := r.ObjectPath(obj.ID)
 
 	plan := transaction.Plan{
@@ -97,6 +126,55 @@ func (r *Repository) SaveObject(ctx context.Context, obj object.Object) error {
 		},
 	}
 
+	return r.Tx.Execute(ctx, plan)
+}
+
+// SaveObjectDocument writes an object and Markdown body atomically.
+func (r *Repository) SaveObjectDocument(ctx context.Context, obj object.Object, body string) error {
+	if err := validateObjectID(obj.ID); err != nil {
+		return err
+	}
+	if err := obj.ValidateIdentity(); err != nil {
+		return err
+	}
+
+	fm, err := yaml.Marshal(obj)
+	if err != nil {
+		return fmt.Errorf("fsrepo: marshal object: %w", err)
+	}
+	plan := transaction.Plan{
+		ID: transaction.NewID(),
+		Writes: []transaction.WriteOp{
+			{Path: r.ObjectPath(obj.ID), Content: buildMarkdown(fm, body)},
+		},
+	}
+	return r.Tx.Execute(ctx, plan)
+}
+
+// SaveObjectWithFile writes an attached file and then the object markdown in one transaction.
+func (r *Repository) SaveObjectWithFile(ctx context.Context, obj object.Object, filePath string, fileContent []byte) error {
+	if err := validateObjectID(obj.ID); err != nil {
+		return err
+	}
+	if err := obj.ValidateIdentity(); err != nil {
+		return err
+	}
+	objDir := r.ObjectDir(obj.ID)
+	if err := ensureWithin(objDir, filePath); err != nil {
+		return err
+	}
+	content, err := objectMarkdown(obj)
+	if err != nil {
+		return err
+	}
+
+	plan := transaction.Plan{
+		ID: transaction.NewID(),
+		Writes: []transaction.WriteOp{
+			{Path: filePath, Content: fileContent},
+			{Path: r.ObjectPath(obj.ID), Content: content},
+		},
+	}
 	return r.Tx.Execute(ctx, plan)
 }
 
@@ -119,6 +197,9 @@ func (r *Repository) ListObjects(ctx context.Context) ([]object.Object, []error)
 			continue
 		}
 		id := object.ID(entry.Name())
+		if err := validateObjectID(id); err != nil {
+			continue
+		}
 		mdPath := r.ObjectPath(id)
 		if _, err := os.Stat(mdPath); os.IsNotExist(err) {
 			continue
@@ -167,12 +248,18 @@ func (r *Repository) ListObjects(ctx context.Context) ([]object.Object, []error)
 
 // Exists checks if an object exists on disk.
 func (r *Repository) Exists(id object.ID) bool {
+	if err := validateObjectID(id); err != nil {
+		return false
+	}
 	_, err := os.Stat(r.ObjectPath(id))
 	return err == nil
 }
 
 // DeleteObject removes an object directory via transaction.
 func (r *Repository) DeleteObject(ctx context.Context, id object.ID) error {
+	if err := validateObjectID(id); err != nil {
+		return err
+	}
 	dir := r.ObjectDir(id)
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		return fmt.Errorf("fsrepo: object %s not found", id)
@@ -189,6 +276,9 @@ func (r *Repository) DeleteObject(ctx context.Context, id object.ID) error {
 
 // AppendHistory appends a JSON line to the history log.
 func (r *Repository) AppendHistory(ctx context.Context, id object.ID, line string) error {
+	if err := validateObjectID(id); err != nil {
+		return err
+	}
 	path := r.HistoryPath(id)
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -198,6 +288,47 @@ func (r *Repository) AppendHistory(ctx context.Context, id object.ID, line strin
 
 	if _, err := f.WriteString(line + "\n"); err != nil {
 		return fmt.Errorf("fsrepo: append history: %w", err)
+	}
+	return nil
+}
+
+func validateObjectID(id object.ID) error {
+	s := string(id)
+	if s == "" {
+		return errors.New("fsrepo: object id must not be empty")
+	}
+	if s == "." || s == ".." || filepath.IsAbs(s) || strings.ContainsAny(s, `/\`) {
+		return fmt.Errorf("fsrepo: unsafe object id %q", s)
+	}
+	if clean := filepath.Clean(s); clean != s {
+		return fmt.Errorf("fsrepo: unsafe object id %q", s)
+	}
+	return nil
+}
+
+func objectMarkdown(obj object.Object) ([]byte, error) {
+	fm, err := yaml.Marshal(obj)
+	if err != nil {
+		return nil, fmt.Errorf("fsrepo: marshal object: %w", err)
+	}
+	return buildMarkdown(fm, ""), nil
+}
+
+func ensureWithin(root, child string) error {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+	childAbs, err := filepath.Abs(child)
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(rootAbs, childAbs)
+	if err != nil {
+		return err
+	}
+	if rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." || filepath.IsAbs(rel) {
+		return fmt.Errorf("fsrepo: path %q escapes %q", child, root)
 	}
 	return nil
 }

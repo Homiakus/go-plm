@@ -4,16 +4,21 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/fs"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"reflect"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/Homiakus/go-plm/frontend"
@@ -49,6 +54,7 @@ type Server struct {
 	api        *wailsapi.API
 	httpServer *http.Server
 	root       string
+	apiToken   string
 }
 
 // NewServer creates a server for the given project root.
@@ -65,10 +71,17 @@ func NewServer(root string) (*Server, error) {
 
 	api := wailsapi.NewAPI(app)
 
+	token, err := newAPIToken()
+	if err != nil {
+		app.Close()
+		return nil, fmt.Errorf("create api token: %w", err)
+	}
+
 	srv := &Server{
-		app:  app,
-		api:  api,
-		root: absRoot,
+		app:      app,
+		api:      api,
+		root:     absRoot,
+		apiToken: token,
 	}
 
 	return srv, nil
@@ -79,7 +92,7 @@ func (s *Server) Start(port int) error {
 	mux := http.NewServeMux()
 
 	// JSON-RPC endpoint
-	mux.HandleFunc("/api", corsMiddleware(s.handleJSONRPC))
+	mux.HandleFunc("/api", s.localAPIMiddleware(s.handleJSONRPC))
 
 	// Static frontend (embedded)
 	frontendFS, err := fs.Sub(frontend.Assets, "dist")
@@ -87,7 +100,7 @@ func (s *Server) Start(port int) error {
 		return fmt.Errorf("frontend not built — run 'cd frontend && npm run build' first: %w", err)
 	}
 	fileServer := http.FileServer(http.FS(frontendFS))
-	mux.Handle("/", fileServer)
+	mux.Handle("/", s.frontendHandler(fileServer))
 
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	s.httpServer = &http.Server{
@@ -136,8 +149,8 @@ func (s *Server) Shutdown() {
 	if s.httpServer != nil {
 		s.httpServer.Shutdown(ctx)
 	}
-	if s.app != nil {
-		s.app.Close()
+	if s.api != nil {
+		s.api.Close()
 	}
 }
 
@@ -177,7 +190,18 @@ func (s *Server) handleJSONRPC(w http.ResponseWriter, r *http.Request) {
 }
 
 // callMethod uses reflection to dispatch JSON-RPC method to API.
-func (s *Server) callMethod(method string, params json.RawMessage) (interface{}, error) {
+func (s *Server) callMethod(method string, params json.RawMessage) (result interface{}, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = nil
+			err = fmt.Errorf("method %q failed: %v", method, r)
+		}
+	}()
+
+	if !allowedRPCMethods[method] {
+		return nil, fmt.Errorf("method %q not allowed", method)
+	}
+
 	apiVal := reflect.ValueOf(s.api)
 	methodVal := apiVal.MethodByName(method)
 	if !methodVal.IsValid() {
@@ -256,6 +280,11 @@ func (s *Server) callMethod(method string, params json.RawMessage) (interface{},
 			}
 		}
 	}
+	for i := range args {
+		if !args[i].IsValid() {
+			args[i] = reflect.Zero(methodType.In(i))
+		}
+	}
 
 	// Call the method
 	results := methodVal.Call(args)
@@ -280,18 +309,122 @@ func (s *Server) callMethod(method string, params json.RawMessage) (interface{},
 	return nil, nil
 }
 
-// corsMiddleware adds CORS headers for local development.
-func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
+var allowedRPCMethods = map[string]bool{
+	"OpenProject":           true,
+	"CreateProject":         true,
+	"CreateObject":          true,
+	"GetObject":             true,
+	"ListObjects":           true,
+	"SearchObjects":         true,
+	"DeleteObject":          true,
+	"RunTransition":         true,
+	"AvailableTransitions":  true,
+	"GetBOM":                true,
+	"ValidateBOM":           true,
+	"DetectBOMCycles":       true,
+	"CheckReleaseReadiness": true,
+	"BuildReleaseScope":     true,
+	"GetTree":               true,
+	"CreateCheckpoint":      true,
+	"GitStatus":             true,
+	"RebuildIndex":          true,
+	"Stats":                 true,
+	"ProjectInfo":           true,
+	"GetObjectDocument":     true,
+	"UpdateObjectDocument":  true,
+	"ValidateObject":        true,
+	"GetObjectHistory":      true,
+	"GetNamingInfo":         true,
+	"AttachArtifact":        true,
+	"UpdateObject":          true,
+	"DuplicateObject":       true,
+	"CreateReleasePackage":  true,
+	"GetNextSequence":       true,
+	"WhereUsed":             true,
+	"ExportBOM":             true,
+	"BumpRevision":          true,
+	"AddRelation":           true,
+	"RecoverTransactions":   true,
+	"RollbackTransaction":   true,
+}
+
+const apiTokenCookie = "plm_api_token"
+
+// frontendHandler serves the UI and sets the per-process API token cookie.
+func (s *Server) frontendHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.setAPITokenCookie(w)
+		next.ServeHTTP(w, r)
+	})
+}
+
+// localAPIMiddleware rejects non-local origins and requires the UI-issued API token.
+func (s *Server) localAPIMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+		if origin != "" && !isAllowedOrigin(origin, r.Host) {
+			http.Error(w, "origin not allowed", http.StatusForbidden)
+			return
+		}
+		if origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
+		if !s.hasValidAPIToken(r) {
+			http.Error(w, "api token required", http.StatusForbidden)
+			return
+		}
 		next(w, r)
 	}
+}
+
+func (s *Server) setAPITokenCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     apiTokenCookie,
+		Value:    s.apiToken,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+func (s *Server) hasValidAPIToken(r *http.Request) bool {
+	token := r.Header.Get("X-PLM-Token")
+	if token == "" {
+		if cookie, err := r.Cookie(apiTokenCookie); err == nil {
+			token = cookie.Value
+		}
+	}
+	return constantTimeEqual(token, s.apiToken)
+}
+
+func constantTimeEqual(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
+func newAPIToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+func isAllowedOrigin(origin, host string) bool {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(u.Host, host)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {

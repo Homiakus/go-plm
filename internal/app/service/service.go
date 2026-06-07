@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"gopkg.in/yaml.v3"
 
@@ -68,7 +69,8 @@ func Open(root string) (*App, error) {
 		return nil, fmt.Errorf("service: open index: %w", err)
 	}
 
-	nstore := naming.NewMemorySequenceStore(cfg.Sequences)
+	sequences := recoverSequences(context.Background(), cfg.Sequences, repo)
+	nstore := naming.NewMemorySequenceStore(sequences)
 	ngen := naming.NewGenerator(cfg.Naming.ProjectCode, nstore)
 
 	// Try loading lifecycle from config/lifecycle.md, fall back to default
@@ -110,6 +112,37 @@ func Open(root string) (*App, error) {
 		NamingGen: ngen,
 		FSM:       machine,
 	}, nil
+}
+
+func recoverSequences(ctx context.Context, configured map[string]int, repo *fsrepo.Repository) map[string]int {
+	seqs := make(map[string]int)
+	for k, v := range naming.DefaultStarts() {
+		seqs[k] = v
+	}
+	for k, v := range configured {
+		if v > seqs[k] {
+			seqs[k] = v
+		}
+	}
+
+	objects, errs := repo.ListObjects(ctx)
+	if len(errs) > 0 {
+		return seqs
+	}
+	for _, obj := range objects {
+		parsed, err := naming.Parse(string(obj.ID))
+		if err != nil {
+			continue
+		}
+		n, err := strconv.Atoi(parsed.Sequence)
+		if err != nil {
+			continue
+		}
+		if n > seqs[parsed.Class] {
+			seqs[parsed.Class] = n
+		}
+	}
+	return seqs
 }
 
 // InitProject creates a new PLM project at the given path.
