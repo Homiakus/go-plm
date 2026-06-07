@@ -98,6 +98,30 @@ type ReleaseRequest struct {
 	ReleaseID    string `json:"release_id"`
 }
 
+// TreeNodeDTO is a tree node for the Project Tree UI.
+type TreeNodeDTO struct {
+	ID            string         `json:"id"`
+	Class         string         `json:"class"`
+	Title         string         `json:"title"`
+	State         string         `json:"state"`
+	Icon          string         `json:"icon"`
+	StatusColor   string         `json:"status_color"`
+	HasChildren   bool           `json:"has_children"`
+	ChildrenCount int            `json:"children_count"`
+	Warnings      int            `json:"warnings"`
+	Blockers      int            `json:"blockers"`
+	ThumbnailURL  string         `json:"thumbnail_url,omitempty"`
+	Metadata      map[string]any `json:"metadata,omitempty"`
+}
+
+// TreeRequest is a request for tree data.
+type TreeRequest struct {
+	Filter string `json:"filter,omitempty"`
+	Sort   string `json:"sort,omitempty"`
+	Offset int    `json:"offset"`
+	Limit  int    `json:"limit"`
+}
+
 // ReleaseResponse is the release result.
 type ReleaseResponse struct {
 	Ready    bool                    `json:"ready"`

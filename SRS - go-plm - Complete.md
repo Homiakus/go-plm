@@ -964,7 +964,239 @@ UI строится вокруг инженерного рабочего про�
 | Procurement Buy List | Закупочный список | P2 |
 | Change Impact Graph | Граф влияния изменений | P2 |
 
-## 13.4. Command Palette
+## 13.4. Project Tree (Мировой уровень)
+
+Project Tree — центральный навигационный элемент системы. Инженер проводит в нём >60% времени. Требования уровня world-class CAD/PLM систем (SolidWorks FeatureTree, Siemens Teamcenter Structure Manager, Dassault ENOVIA).
+
+### 13.4.1. Визуальное представление
+
+```
+┌─────────────────────────────────────┐
+│ 🔍 [Filter objects...]     [≡] [⊞] │  ← Search + View toggle + Create
+├─────────────────────────────────────┤
+│ ▼ 📦 demo-asm-0100 ⬤ Motor Assembly│  ← Assembly, approved
+│   ├─ 🖼 🟢 demo-prt-0001  Bracket  │  ← Part, draft, WITH thumbnail
+│   │  ┌─thumbnail─────────────────┐ │
+│   │  │    ┌──────────────┐       │ │  ← Inline 64x64 preview
+│   │  │    │   ██░░░░██   │       │ │
+│   │  │    │   ██░░░░██   │       │ │
+│   │  │    └──────────────┘       │ │
+│   │  └──────────────────────────┘ │
+│   ├─ 🖼 🟡 demo-prt-0002  Shaft   │  ← Part, in_review
+│   ├─ 🔩 🟢 std-fst-0001   Bolt    │  ← Standard part, released
+│   ├─ 📐 🟡 demo-drw-0001  Drawing │  ← Drawing, in_review
+│   ├─ ✂️ ⬤ demo-cut-0001  Cut     │  ← Manufacturing file
+│   ├─ 📋 ⬤ demo-wi-0001   Instr.  │  ← Work Instruction
+│   └─ 🏷 🟢 std-brg-0002  Bearing │  ← Standard part, released
+│ ▶ 📦 demo-asm-0101 ⬤ Gearbox     │  ← Assembly, collapsed
+│ ▼ ❌ demo-prt-0003  Gasket        │  ← BLOCKED (red dot, strikethrough)
+│ ▼ ⚠ demo-prt-0004  Cover         │  ← Has warnings
+├─────────────────────────────────────┤
+│ 12 objects · 2 filtered · 2 blocked │  ← Status bar
+└─────────────────────────────────────┘
+```
+
+### 13.4.2. Иконки классов
+
+| Class | Иконка | Emoji | Описание |
+|-------|--------|-------|----------|
+| asm (Assembly) | 📦 | `package` | Сборка |
+| prt (Part) | 🖼 | `component` | Деталь (с thumbnail при наличии) |
+| drw (Drawing) | 📐 | `ruler` | Чертеж |
+| doc (Document) | 📄 | `file-text` | Документ |
+| std (Standard Part) | 🔩 | `nut` | Стандартное изделие |
+| cut (Cutting File) | ✂️ | `scissors` | Файл резки |
+| bnd (Bending File) | ⤵ | `corner-down-right` | Файл гибки |
+| nc (NC Program) | ⚙ | `cpu` | Программа ЧПУ |
+| ins (Inspection) | 🔍 | `search-check` | Контроль |
+| tpc (Tech Card) | 📋 | `clipboard-list` | Техкарта |
+| wi (Work Instruction) | 📋 | `list-checks` | Инструкция |
+| bom (Formal BOM) | 📊 | `table` | Спецификация |
+| rel (Release) | 🏷 | `tag` | Релиз |
+| cr (Change Request) | 🔄 | `git-pull-request` | Изменение |
+| mat (Material) | 🧱 | `brick-wall` | Материал |
+
+### 13.4.3. Статусные индикаторы
+
+Цветные точки слева от названия:
+
+| Цвет | Состояние | Значение |
+|------|-----------|----------|
+| 🟢 | released | Выпущен |
+| 🔵 | approved | Утверждён |
+| 🟡 | in_review | На проверке |
+| ⚪ | draft | Черновик |
+| 🔴 | blocked | Заблокирован |
+| ⚫ | obsolete/archived | Архив |
+
+Дополнительные индикаторы:
+- **⚠ warning** — оранжевый треугольник при наличии warning diagnostics
+- **❌ blocker** — красный крест при наличии blocker diagnostics
+- **Зачёркнутый текст** — для obsolete/archived
+
+### 13.4.4. Миниатюры (Thumbnails)
+
+**MUST**: Система поддерживает отображение миниатюр деталей прямо в дереве.
+
+**Источник миниатюры** (приоритет):
+1. Явно прикреплённый файл с `role: thumbnail` в artifacts
+2. Первое изображение (kind: image) в artifacts
+3. Первый CAD-файл (kind: cad) — визуализация через встроенный轻量 viewer
+4. Автосгенерированная иконка класса
+
+**Параметры отображения**:
+- Размер: 48×48 px (компактный режим) / 64×64 px (нормальный)
+- Формат: PNG, JPEG, WebP
+- Позиция: справа от названия или под строкой (inline expand)
+- Ленивая загрузка: подгружается при прокрутке в видимую область
+- Кэширование: миниатюры кэшируются в `.plm/cache/thumbnails/`
+- Placeholder: при отсутствии — иконка класса
+
+**Thumbnail в YAML frontmatter**:
+```yaml
+metadata:
+  thumbnail: files/images/bracket-thumb.png   # явная ссылка
+```
+
+**Автогенерация thumbnail**:
+- При отсутствии явного thumbnail, система ищет первый artifact с kind=image
+- Если изображений нет — отображается иконка класса
+- Система НЕ генерирует thumbnail автоматически из CAD (требует рендерера)
+
+### 13.4.5. Горячие клавиши
+
+| Клавиша | Действие |
+|---------|----------|
+| ↑↓ | Навигация по дереву |
+| ←→ | Свернуть/развернуть узел |
+| Enter | Открыть объект (Object Detail Screen) |
+| Space | Быстрый preview (popover) |
+| F2 | Переименовать (inline edit) |
+| Ctrl+C | Копировать ID |
+| Delete | Удалить (с подтверждением) |
+| Ctrl+Click | Мультивыбор |
+| Shift+Click | Выбор диапазона |
+| Ctrl+A | Выбрать все |
+| / | Фокус в строку поиска |
+
+### 13.4.6. Контекстное меню (правый клик)
+
+```
+┌─────────────────────────────┐
+│  Open                       │  ← Enter
+│  Open in New Tab            │
+│  Reveal in File Manager     │
+│  ─────────────────────────  │
+│  Add Child to BOM...        │  ← Только для asm
+│  Create Drawing...          │
+│  Attach File...             │
+│  ─────────────────────────  │
+│  Submit for Review  ▸       │  ← Lifecycle actions
+│    Submit Review            │
+│    Approve                  │
+│    Release                  │
+│    Block...                 │
+│  ─────────────────────────  │
+│  Validate                   │
+│  Show Where Used            │
+│  Show Change Impact         │
+│  ─────────────────────────  │
+│  Duplicate                  │
+│  Rename (F2)                │
+│  Delete                     │
+│  ─────────────────────────  │
+│  Copy ID                    │
+│  Copy Full Path             │
+└─────────────────────────────┘
+```
+
+### 13.4.7. Режимы сортировки
+
+Переключаются кнопкой `[≡]` в заголовке панели:
+
+| Режим | Описание |
+|-------|----------|
+| **Tree** (умолч.) | Иерархический: сборки → вложенные объекты по BOM |
+| **Alpha** | Алфавитный по title |
+| **Class** | Сгруппировано по классам |
+| **Status** | Сгруппировано по state (draft → review → approved → released) |
+| **Recent** | По дате изменения |
+
+### 13.4.8. Фильтрация
+
+Строка поиска `[Filter objects...]` поддерживает:
+
+- **По ID**: `demo-prt-*` — glob-паттерны
+- **По классу**: `class:prt`, `class:asm`
+- **По статусу**: `state:draft`, `state:blocked`
+- **По metadata**: `material:al5052`, `thickness:2`
+- **Комбинированный**: `class:prt state:draft material:al*`
+- **Быстрые фильтры**: кнопки-чипсы под строкой поиска:
+  `[All] [Draft] [Blocked] [My Objects] [With Issues]`
+
+Отфильтрованные объекты показываются плоским списком (без иерархии).
+
+### 13.4.9. Drag & Drop
+
+- **Перетаскивание prt/std на asm** → добавляет связь `contains` (добавление в BOM)
+- **Перетаскивание файла из файлового менеджера** → AttachArtifact
+- **Ctrl+Drag** — копирование связи
+- **Индикатор**: зелёная рамка при валидной цели, красная при невалидной
+
+### 13.4.10. Lazy Loading
+
+Для проектов с >500 объектов:
+- Дерево загружает только видимые узлы
+- Дочерние узлы подгружаются при разворачивании (on-demand)
+- Используется SQLite индекс для быстрой пагинации
+- Виртуальный скролл (renders only visible rows)
+
+### 13.4.11. Мультивыбор и массовые операции
+
+- Ctrl+Click / Shift+Click для выбора нескольких узлов
+- При выборе ≥2 объектов появляется панель массовых действий:
+  `[Validate Selected] [Change State ▾] [Export...] [Add Tag]`
+- Выбранные объекты подсвечиваются
+
+### 13.4.12. Вложенные индикаторы
+
+Справа от каждого узла — сводная информация:
+
+```
+demo-asm-0100  ⬤  [8 children]  [⚠ 2]  [❌ 1]
+```
+- Количество дочерних объектов
+- Количество warning diagnostics (оранжевый)
+- Количество blocker diagnostics (красный)
+
+### 13.4.13. Backend контракт
+
+API для дерева:
+```
+Query: GetTree(filter, sort, offset, limit) → TreeNode[]
+Query: GetChildren(parentID) → TreeNode[]
+Query: GetTreeSummary() → {total, blocked, warnings, byClass}
+```
+
+TreeNode:
+```json
+{
+  "id": "demo-prt-0001-v1.0",
+  "class": "prt",
+  "title": "Bracket Motor",
+  "state": "draft",
+  "has_children": false,
+  "children_count": 0,
+  "icon": "component",
+  "status_color": "gray",
+  "warnings": 0,
+  "blockers": 0,
+  "thumbnail_url": "files/images/bracket-thumb.png",
+  "metadata": {"material": "al5052"}
+}
+```
+
+## 13.5. Command Palette
 
 **Горячая клавиша**: `Ctrl+K`
 

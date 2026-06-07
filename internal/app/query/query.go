@@ -3,9 +3,11 @@ package query
 
 import (
 	"context"
+	"sort"
 
 	"github.com/Homiakus/go-plm/internal/api/dto"
 	"github.com/Homiakus/go-plm/internal/api/mapper"
+	"github.com/Homiakus/go-plm/internal/api/tree"
 	"github.com/Homiakus/go-plm/internal/core/object"
 	"github.com/Homiakus/go-plm/internal/modules/bom"
 	"github.com/Homiakus/go-plm/internal/modules/release"
@@ -98,4 +100,108 @@ func (s *ObjectService) CheckReleaseReadiness(ctx context.Context, rootID string
 		Ready:    readiness.Ready,
 		Blockers: readiness.Blockers,
 	}, nil
+}
+
+// GetTree returns tree nodes for the Project Tree UI.
+func (s *ObjectService) GetTree(ctx context.Context, req dto.TreeRequest) ([]dto.TreeNodeDTO, error) {
+	objects, errs := s.Objects.ListObjects(ctx)
+	if len(errs) > 0 {
+		return nil, errs[0]
+	}
+
+	var nodes []dto.TreeNodeDTO
+	for _, obj := range objects {
+		// Basic filtering
+		if req.Filter != "" {
+			if !matchesFilter(obj, req.Filter) {
+				continue
+			}
+		}
+
+		thumb := tree.ThumbnailURL(obj)
+		childrenCount := 0
+		hasChildren := false
+		if obj.Class == object.ClassAssembly {
+			for _, r := range obj.Relations {
+				if r.Type == "contains" {
+					childrenCount++
+					hasChildren = true
+				}
+			}
+		}
+
+		nodes = append(nodes, dto.TreeNodeDTO{
+			ID:            string(obj.ID),
+			Class:         string(obj.Class),
+			Title:         obj.Title,
+			State:         string(obj.State),
+			Icon:          tree.Icon(obj.Class),
+			StatusColor:   tree.StatusColor(obj.State),
+			HasChildren:   hasChildren,
+			ChildrenCount: childrenCount,
+			ThumbnailURL:  thumb,
+			Metadata:      obj.Metadata,
+		})
+	}
+
+	// Sort
+	switch req.Sort {
+	case "alpha":
+		sort.Slice(nodes, func(i, j int) bool { return nodes[i].Title < nodes[j].Title })
+	case "class":
+		sort.Slice(nodes, func(i, j int) bool { return nodes[i].Class < nodes[j].Class })
+	case "status":
+		sort.Slice(nodes, func(i, j int) bool { return nodes[i].State < nodes[j].State })
+	}
+
+	// Pagination
+	if req.Limit > 0 {
+		start := req.Offset
+		end := start + req.Limit
+		if start >= len(nodes) {
+			return nil, nil
+		}
+		if end > len(nodes) {
+			end = len(nodes)
+		}
+		nodes = nodes[start:end]
+	}
+
+	return nodes, nil
+}
+
+func matchesFilter(obj object.Object, filter string) bool {
+	// Simple substring match on ID, title, class, state
+	s := string(obj.ID) + " " + obj.Title + " " + string(obj.Class) + " " + string(obj.State)
+	return containsFold(s, filter)
+}
+
+func containsFold(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr ||
+		len(substr) == 0 ||
+		findFold(s, substr) >= 0)
+}
+
+func findFold(s, substr string) int {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		match := true
+		for j := 0; j < len(substr); j++ {
+			sc := s[i+j]
+			tc := substr[j]
+			if sc >= 'A' && sc <= 'Z' {
+				sc += 32
+			}
+			if tc >= 'A' && tc <= 'Z' {
+				tc += 32
+			}
+			if sc != tc {
+				match = false
+				break
+			}
+		}
+		if match {
+			return i
+		}
+	}
+	return -1
 }
