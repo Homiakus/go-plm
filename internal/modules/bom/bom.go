@@ -139,11 +139,7 @@ func (s *Service) walkBOM(ctx context.Context, fromID string, visited map[string
 
 		// Recurse into child if it's an assembly
 		if childClass == string(object.ClassAssembly) {
-			newVisited := make(map[string]bool)
-			for k, v := range visited {
-				newVisited[k] = v
-			}
-			if err := s.walkBOM(ctx, rel.ToID, newVisited, effectiveQty, level+1, rows, pos); err != nil {
+			if err := s.walkBOM(ctx, rel.ToID, visited, effectiveQty, level+1, rows, pos); err != nil {
 				return err
 			}
 		}

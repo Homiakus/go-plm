@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Homiakus/go-plm/internal/core/artifact"
@@ -189,6 +190,7 @@ func (d *DB) SearchObjects(ctx context.Context, query string, limit int) ([]obje
 }
 
 // RebuildIndex drops and recreates all index data from a list of objects.
+// Uses batch INSERT (500 rows/batch) for performance.
 func (d *DB) RebuildIndex(ctx context.Context, objects []object.Object) error {
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -200,19 +202,40 @@ func (d *DB) RebuildIndex(ctx context.Context, objects []object.Object) error {
 	tx.ExecContext(ctx, "DELETE FROM relations")
 	tx.ExecContext(ctx, "DELETE FROM objects")
 
+	if len(objects) == 0 {
+		return tx.Commit()
+	}
+
 	now := time.Now().UTC().Format(time.RFC3339)
-	for _, obj := range objects {
-		metaJSON, _ := json.Marshal(obj.Metadata)
-		_, err := tx.ExecContext(ctx, `
-			INSERT INTO objects (id, project, class, sequence, version, revision, state, title, metadata, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, string(obj.ID), obj.Project, string(obj.Class), obj.Sequence,
-			obj.Version, obj.Revision, string(obj.State), obj.Title,
-			string(metaJSON), now, now)
-		if err != nil {
-			return err
+	const batchSize = 500
+
+	for i := 0; i < len(objects); i += batchSize {
+		end := i + batchSize
+		if end > len(objects) {
+			end = len(objects)
+		}
+		batch := objects[i:end]
+
+		var sb strings.Builder
+		sb.WriteString("INSERT INTO objects (id, project, class, sequence, version, revision, state, title, metadata, created_at, updated_at) VALUES ")
+		args := make([]interface{}, 0, len(batch)*11)
+
+		for j, obj := range batch {
+			if j > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+			metaJSON, _ := json.Marshal(obj.Metadata)
+			args = append(args, string(obj.ID), obj.Project, string(obj.Class), obj.Sequence,
+				obj.Version, obj.Revision, string(obj.State), obj.Title,
+				string(metaJSON), now, now)
+		}
+
+		if _, err := tx.ExecContext(ctx, sb.String(), args...); err != nil {
+			return fmt.Errorf("index: batch insert: %w", err)
 		}
 	}
+
 	return tx.Commit()
 }
 

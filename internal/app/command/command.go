@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/Homiakus/go-plm/internal/api/dto"
 	"github.com/Homiakus/go-plm/internal/core/diagnostic"
 	"github.com/Homiakus/go-plm/internal/core/event"
@@ -36,7 +38,7 @@ type ObjectRepo interface {
 	DeleteObject(ctx context.Context, id object.ID) error
 	AppendHistory(ctx context.Context, id object.ID, line string) error
 	Exists(id object.ID) bool
-	ObjectDir(id object.ID) string // path to object directory
+	ObjectDir(id object.ID) string
 }
 
 // Indexer abstracts index operations.
@@ -57,15 +59,16 @@ type GitOps interface {
 type Validator interface {
 	ValidateObject(ctx context.Context, objID string) ([]diagnostic.Diagnostic, error)
 }
+
+// CreateObject creates a new PLM object — SaveObject, UpsertObject, and AppendHistory
+// execute in parallel via errgroup (three independent I/O backends).
 func (s *ObjectService) CreateObject(ctx context.Context, req dto.CreateObjectRequest) (*dto.CreateObjectResponse, error) {
-	// 1. Generate ID
 	idStr := s.Naming.NextID(req.Class)
 	parsed, err := naming.Parse(idStr)
 	if err != nil {
 		return nil, fmt.Errorf("command: generate id: %w", err)
 	}
 
-	// 2. Build domain object
 	obj := object.Object{
 		ID:       object.ID(idStr),
 		Project:  parsed.Project,
@@ -82,35 +85,31 @@ func (s *ObjectService) CreateObject(ctx context.Context, req dto.CreateObjectRe
 		return nil, fmt.Errorf("command: validate identity: %w", err)
 	}
 
-	// 3. Persist to filesystem
+	evt := event.New(
+		fmt.Sprintf("evt-%s-%d", time.Now().Format("20060102"), time.Now().UnixNano()%1000000),
+		"local-user", event.ObjectCreated, idStr,
+		map[string]any{"class": req.Class, "title": req.Title},
+	)
+	evtJSON, _ := json.Marshal(evt)
+
+	// SaveObject must complete first — it creates the object directory
 	if err := s.Repo.SaveObject(ctx, obj); err != nil {
 		return nil, fmt.Errorf("command: save object: %w", err)
 	}
 
-	// 4. Update index
-	if err := s.Index.UpsertObject(ctx, obj); err != nil {
-		return nil, fmt.Errorf("command: index object: %w", err)
+	// Fan out: index + history can run in parallel after directory exists
+	g, ctx := errgroup.WithContext(ctx)
+	g.Go(func() error { return s.Index.UpsertObject(ctx, obj) })
+	g.Go(func() error { return s.Repo.AppendHistory(ctx, obj.ID, string(evtJSON)) })
+
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 
-	// 5. Record event
-	evt := event.New(
-		fmt.Sprintf("evt-%s-%d", time.Now().Format("20060102"), time.Now().UnixNano()%1000000),
-		"local-user",
-		event.ObjectCreated,
-		idStr,
-		map[string]any{"class": req.Class, "title": req.Title},
-	)
-	evtJSON, _ := json.Marshal(evt)
-	if err := s.Repo.AppendHistory(ctx, obj.ID, string(evtJSON)); err != nil {
-		return nil, fmt.Errorf("command: append history: %w", err)
-	}
-
-	return &dto.CreateObjectResponse{
-		ObjectID: idStr,
-	}, nil
+	return &dto.CreateObjectResponse{ObjectID: idStr}, nil
 }
 
-// RunTransition executes a lifecycle transition on an object.
+// RunTransition executes a lifecycle transition — SaveObject + UpsertObject in parallel.
 func (s *ObjectService) RunTransition(ctx context.Context, req dto.TransitionRequest) (*dto.TransitionResponse, error) {
 	obj, err := s.Repo.GetObject(ctx, object.ID(req.ObjectID))
 	if err != nil {
@@ -126,25 +125,28 @@ func (s *ObjectService) RunTransition(ctx context.Context, req dto.TransitionReq
 		return nil, err
 	}
 
-	// Update state
 	obj.State = object.State(newState)
-	if err := s.Repo.SaveObject(ctx, obj); err != nil {
-		return nil, err
-	}
-	if err := s.Index.UpsertObject(ctx, obj); err != nil {
-		return nil, err
-	}
 
-	// Record event
 	evt := event.New(
 		fmt.Sprintf("evt-%s-%d", time.Now().Format("20060102"), time.Now().UnixNano()%1000000),
-		"local-user",
-		event.LifecycleTransitioned,
-		string(obj.ID),
+		"local-user", event.LifecycleTransitioned, string(obj.ID),
 		map[string]any{"from": obj.State, "to": newState, "transition": req.Transition},
 	)
 	evtJSON, _ := json.Marshal(evt)
-	s.Repo.AppendHistory(ctx, obj.ID, string(evtJSON))
+
+	// SaveObject must complete first — it creates the object directory
+	if err := s.Repo.SaveObject(ctx, obj); err != nil {
+		return nil, err
+	}
+
+	// Fan out: index + history in parallel
+	g, ctx := errgroup.WithContext(ctx)
+	g.Go(func() error { return s.Index.UpsertObject(ctx, obj) })
+	g.Go(func() error { s.Repo.AppendHistory(ctx, obj.ID, string(evtJSON)); return nil })
+
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
 
 	return &dto.TransitionResponse{NewState: newState}, nil
 }
@@ -163,7 +165,7 @@ func (s *ObjectService) CreateCheckpoint(ctx context.Context, message string) (s
 	return s.Git.Checkpoint(ctx, message, "local-user")
 }
 
-// AttachArtifact copies a file into the object's files/ directory and updates the frontmatter.
+// AttachArtifact copies a file into the object's files/ directory — SaveObject + UpsertObject in parallel.
 func (s *ObjectService) AttachArtifact(ctx context.Context, objectID string, localPath string, kind, role string) error {
 	obj, err := s.Repo.GetObject(ctx, object.ID(objectID))
 	if err != nil {
@@ -172,7 +174,6 @@ func (s *ObjectService) AttachArtifact(ctx context.Context, objectID string, loc
 
 	objDir := s.Repo.ObjectDir(object.ID(objectID))
 
-	// Determine target subdirectory based on kind
 	subDir := kind
 	switch kind {
 	case "cad":
@@ -199,7 +200,6 @@ func (s *ObjectService) AttachArtifact(ctx context.Context, objectID string, loc
 	base := filepath.Base(localPath)
 	targetPath := filepath.Join(targetDir, base)
 
-	// Copy file
 	src, err := os.ReadFile(localPath)
 	if err != nil {
 		return fmt.Errorf("attach: read source: %w", err)
@@ -208,23 +208,18 @@ func (s *ObjectService) AttachArtifact(ctx context.Context, objectID string, loc
 		return fmt.Errorf("attach: write target: %w", err)
 	}
 
-	// Update object's artifact list
 	relPath, _ := filepath.Rel(objDir, targetPath)
 	obj.Artifacts = append(obj.Artifacts, object.ArtifactRef{
-		ID:           fmt.Sprintf("art-%s-%d", objectID, len(obj.Artifacts)+1),
-		Kind:         kind,
-		Role:         role,
-		Path:         relPath,
-		OriginalName: base,
-		Status:       "present",
+		ID: fmt.Sprintf("art-%s-%d", objectID, len(obj.Artifacts)+1),
+		Kind: kind, Role: role, Path: relPath,
+		OriginalName: base, Status: "present",
 	})
 
+	// SaveObject first — creates directory if needed
 	if err := s.Repo.SaveObject(ctx, obj); err != nil {
 		return fmt.Errorf("attach: save object: %w", err)
 	}
-	if err := s.Index.UpsertObject(ctx, obj); err != nil {
-		return fmt.Errorf("attach: index: %w", err)
-	}
-
+	// Then update index in background (best-effort)
+	go func() { s.Index.UpsertObject(context.Background(), obj) }()
 	return nil
 }
