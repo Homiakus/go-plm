@@ -166,13 +166,26 @@ func (d *DB) GetObject(ctx context.Context, id object.ID) (object.Object, error)
 	return obj, nil
 }
 
+// sanitizeFTS5Query escapes FTS5 special characters and wraps the query safely.
+// FTS5 syntax: *, ", AND, OR, NOT, NEAR(), ( ) have special meaning.
+// We wrap the user query in double-quotes to treat it as a phrase,
+// escaping any embedded double-quotes per FTS5 rules.
+func sanitizeFTS5Query(q string) string {
+	if q == "" {
+		return `""`
+	}
+	// Escape double-quotes: " → ""
+	escaped := strings.ReplaceAll(q, `"`, `""`)
+	return `"` + escaped + `"`
+}
+
 // SearchObjects performs FTS5 search over objects.
 func (d *DB) SearchObjects(ctx context.Context, query string, limit int) ([]object.ID, error) {
 	if limit <= 0 {
 		limit = 20
 	}
 	rows, err := d.db.QueryContext(ctx,
-		"SELECT id FROM fts_objects WHERE fts_objects MATCH ? LIMIT ?", query, limit)
+		"SELECT id FROM fts_objects WHERE fts_objects MATCH ? LIMIT ?", sanitizeFTS5Query(query), limit)
 	if err != nil {
 		return nil, err
 	}

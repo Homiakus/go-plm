@@ -58,7 +58,11 @@ func BOMRowsToDTO(rows []bom.BOMRow) []dto.BOMRowDTO {
 }
 
 // ObjectsToDTO converts a slice of Objects to DTOs.
+// Returns empty slice (not nil) for empty input.
 func ObjectsToDTO(objects []object.Object) []dto.ObjectDTO {
+	if objects == nil {
+		return []dto.ObjectDTO{}
+	}
 	result := make([]dto.ObjectDTO, len(objects))
 	for i, obj := range objects {
 		result[i] = ObjectToDTO(obj)

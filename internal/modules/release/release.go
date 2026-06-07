@@ -4,6 +4,7 @@ package release
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/Homiakus/go-plm/internal/core/diagnostic"
@@ -95,6 +96,7 @@ func (s *Service) collectScope(ctx context.Context, id string, visited map[strin
 func (s *Service) CheckReadiness(ctx context.Context, scope *Scope) (*Readiness, error) {
 	const workers = 8
 	sem := make(chan struct{}, workers)
+	var wg sync.WaitGroup
 
 	type result struct {
 		id      string
@@ -103,8 +105,10 @@ func (s *Service) CheckReadiness(ctx context.Context, scope *Scope) (*Readiness,
 	results := make(chan result, len(scope.Objects))
 
 	for _, id := range scope.Objects {
+		wg.Add(1)
 		sem <- struct{}{}
 		go func(oid string) {
+			defer wg.Done()
 			defer func() { <-sem }()
 			obj, err := s.Objects.GetObject(ctx, object.ID(oid))
 			if err != nil {
@@ -126,10 +130,7 @@ func (s *Service) CheckReadiness(ctx context.Context, scope *Scope) (*Readiness,
 			results <- result{oid, nil}
 		}(id)
 	}
-	// Drain semaphore
-	for i := 0; i < workers; i++ {
-		sem <- struct{}{}
-	}
+	wg.Wait()
 	close(results)
 
 	var blockers []diagnostic.Diagnostic
@@ -147,6 +148,7 @@ func (s *Service) CheckReadiness(ctx context.Context, scope *Scope) (*Readiness,
 func (s *Service) GenerateManifest(ctx context.Context, releaseID string, scope *Scope) (*Manifest, error) {
 	const workers = 8
 	sem := make(chan struct{}, workers)
+	var wg sync.WaitGroup
 
 	type entry struct {
 		idx int
@@ -155,8 +157,10 @@ func (s *Service) GenerateManifest(ctx context.Context, releaseID string, scope 
 	entries := make(chan entry, len(scope.Objects))
 
 	for i, id := range scope.Objects {
+		wg.Add(1)
 		sem <- struct{}{}
 		go func(idx int, oid string) {
+			defer wg.Done()
 			defer func() { <-sem }()
 			mo := ManifestObject{ID: oid}
 			obj, err := s.Objects.GetObject(ctx, object.ID(oid))
@@ -167,9 +171,7 @@ func (s *Service) GenerateManifest(ctx context.Context, releaseID string, scope 
 			entries <- entry{idx, mo}
 		}(i, id)
 	}
-	for i := 0; i < workers; i++ {
-		sem <- struct{}{}
-	}
+	wg.Wait()
 	close(entries)
 
 	// Sort back to original order

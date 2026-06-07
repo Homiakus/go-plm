@@ -3,7 +3,11 @@ package query
 
 import (
 	"context"
+	"encoding/csv"
+	"encoding/json"
+	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/Homiakus/go-plm/internal/api/dto"
 	"github.com/Homiakus/go-plm/internal/api/mapper"
@@ -11,6 +15,7 @@ import (
 	"github.com/Homiakus/go-plm/internal/core/object"
 	"github.com/Homiakus/go-plm/internal/modules/bom"
 	"github.com/Homiakus/go-plm/internal/modules/release"
+	"gopkg.in/yaml.v3"
 )
 
 // ObjectReader reads objects for queries.
@@ -109,7 +114,7 @@ func (s *ObjectService) GetTree(ctx context.Context, req dto.TreeRequest) ([]dto
 		return nil, errs[0]
 	}
 
-	var nodes []dto.TreeNodeDTO
+	nodes := make([]dto.TreeNodeDTO, 0)
 	for _, obj := range objects {
 		// Basic filtering
 		if req.Filter != "" {
@@ -204,4 +209,67 @@ func findFold(s, substr string) int {
 		}
 	}
 	return -1
+}
+
+// WhereUsed returns all objects that reference the given object.
+func (s *ObjectService) WhereUsed(ctx context.Context, id string) ([]dto.ObjectDTO, error) {
+	objects, errs := s.Objects.ListObjects(ctx)
+	if len(errs) > 0 {
+		return nil, errs[0]
+	}
+
+	var usedIn []dto.ObjectDTO
+	for _, obj := range objects {
+		if string(obj.ID) == id {
+			continue
+		}
+		for _, rel := range obj.Relations {
+			if rel.ToID == id {
+				usedIn = append(usedIn, mapper.ObjectToDTO(obj))
+				break
+			}
+		}
+	}
+	return usedIn, nil
+}
+
+// ExportBOM exports a BOM in the specified format (csv, json, yaml).
+func (s *ObjectService) ExportBOM(ctx context.Context, rootID string, format string) ([]byte, error) {
+	rows, err := s.BOM.GetStructured(ctx, object.ID(rootID))
+	if err != nil {
+		return nil, fmt.Errorf("export BOM: %w", err)
+	}
+
+	switch strings.ToLower(format) {
+	case "csv":
+		return exportBOMCSV(rows)
+	case "json":
+		return json.MarshalIndent(rows, "", "  ")
+	case "yaml", "yml":
+		return yaml.Marshal(rows)
+	default:
+		return nil, fmt.Errorf("export BOM: unsupported format %q (use csv, json, yaml)", format)
+	}
+}
+
+func exportBOMCSV(rows []bom.BOMRow) ([]byte, error) {
+	var buf strings.Builder
+	w := csv.NewWriter(&buf)
+	w.Write([]string{"level", "position", "child_id", "child_class", "quantity", "unit", "make_buy"})
+	for _, r := range rows {
+		w.Write([]string{
+			fmt.Sprintf("%d", r.Level),
+			r.Position,
+			r.ChildID,
+			r.ChildClass,
+			fmt.Sprintf("%.2f", r.Quantity),
+			r.Unit,
+			r.MakeBuy,
+		})
+	}
+	w.Flush()
+	if err := w.Error(); err != nil {
+		return nil, err
+	}
+	return []byte(buf.String()), nil
 }

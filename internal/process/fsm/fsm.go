@@ -107,6 +107,16 @@ func (m *Machine) EffectsFor(transitionName string) []string {
 	return tr.Effects
 }
 
+// GetTransition returns the Transition definition for a given name, or nil.
+func (m *Machine) GetTransition(name string) *Transition {
+	for i := range m.Def.Transitions {
+		if m.Def.Transitions[i].Name == name {
+			return &m.Def.Transitions[i]
+		}
+	}
+	return nil
+}
+
 func (m *Machine) getTransition(name string) *Transition {
 	for i := range m.Def.Transitions {
 		if m.Def.Transitions[i].Name == name {
@@ -114,4 +124,24 @@ func (m *Machine) getTransition(name string) *Transition {
 		}
 	}
 	return nil
+}
+
+// StandardObjectLifecycle returns the default object lifecycle definition.
+func StandardObjectLifecycle() Definition {
+	return Definition{
+		Name:    "object_lifecycle",
+		Initial: "draft",
+		States:  []string{"draft", "in_review", "approved", "released", "blocked", "obsolete", "archived"},
+		Transitions: []Transition{
+			{Name: "submit_review", From: []string{"draft"}, To: "in_review", Guards: []string{"valid_name", "required_metadata", "no_broken_relations"}},
+			{Name: "reject", From: []string{"in_review"}, To: "draft"},
+			{Name: "approve", From: []string{"in_review"}, To: "approved", Guards: []string{"no_blocking_issues", "checksums_actual"}},
+			{Name: "release", From: []string{"approved"}, To: "released", Guards: []string{"no_release_blockers", "children_released", "bom_valid"}, Effects: []string{"create_git_tag"}},
+			{Name: "revise", From: []string{"released"}, To: "draft", Effects: []string{"create_new_revision", "create_change_event"}},
+			{Name: "block", From: []string{"*"}, To: "blocked"},
+			{Name: "unblock", From: []string{"blocked"}, To: "draft"},
+			{Name: "obsolete", From: []string{"released"}, To: "obsolete"},
+			{Name: "archive", From: []string{"obsolete"}, To: "archived"},
+		},
+	}
 }

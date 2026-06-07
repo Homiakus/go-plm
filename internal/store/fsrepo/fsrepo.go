@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 
@@ -126,12 +127,13 @@ func (r *Repository) ListObjects(ctx context.Context) ([]object.Object, []error)
 	}
 
 	if len(ids) == 0 {
-		return nil, nil
+		return []object.Object{}, nil
 	}
 
 	// Parallel reads with bounded concurrency
 	const workers = 8
 	sem := make(chan struct{}, workers)
+	var wg sync.WaitGroup
 	type result struct {
 		obj object.Object
 		err error
@@ -139,17 +141,16 @@ func (r *Repository) ListObjects(ctx context.Context) ([]object.Object, []error)
 	results := make([]result, len(ids))
 
 	for i, id := range ids {
+		wg.Add(1)
 		sem <- struct{}{}
 		go func(idx int, oid object.ID) {
+			defer wg.Done()
 			defer func() { <-sem }()
 			obj, err := r.GetObject(ctx, oid)
 			results[idx] = result{obj, err}
 		}(i, id)
 	}
-	// Drain semaphore
-	for i := 0; i < workers; i++ {
-		sem <- struct{}{}
-	}
+	wg.Wait()
 
 	var objects []object.Object
 	var errs []error

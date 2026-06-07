@@ -71,3 +71,5 @@ $RECYCLE.BIN/
 
 # === Docker ===
 docker-compose.override.yml
+demo/
+.serena/

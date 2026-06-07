@@ -17,14 +17,24 @@ BUILD_DIR := build
 
 all: lint test build
 
+# Build frontend first, then embed into Go binary
 build: frontend-build
 	$(GOBUILD) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/plm/
 
+# Run the built binary (starts HTTP server + opens browser)
 run: build
-	./$(BUILD_DIR)/$(BINARY_NAME)
+	./$(BUILD_DIR)/$(BINARY_NAME) .
+
+# Start a new demo project and open it
+demo: build
+	./$(BUILD_DIR)/$(BINARY_NAME) init demo-project 'Demo PLM Project'
+	./$(BUILD_DIR)/$(BINARY_NAME) demo-project
 
 test:
-	$(GOTEST) -v -race -count=1 ./...
+	$(GOTEST) -count=1 ./...
+
+test-race:
+	$(GOTEST) -race -count=1 ./...
 
 test-cover:
 	$(GOTEST) -coverprofile=coverage.out ./...
@@ -46,10 +56,6 @@ frontend-build:
 
 frontend-dev:
 	cd $(FRONTEND_DIR) && $(NPM) run dev
-
-# === Docker (future) ===
-docker-build:
-	docker build -t go-plm .
 
 # === Clean ===
 clean:
