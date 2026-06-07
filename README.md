@@ -24,13 +24,13 @@
 - **Files are source of truth** — no database, no hidden state. Everything is `.md` + `.yaml` + `.json` on disk.
 - **Git-native** — every change is a commit, every release is a tag.
 - **FSM-driven** — object lifecycle, document states, releases, and shop-floor builds are finite state machines with guard validation.
-- **Desktop-first** — Wails 3 + React + CodeMirror 6, runs as a single binary.
+- **Desktop-first** — Wails 2 + React + Vditor, runs as a single binary.
 - **Markdown-everywhere** — YAML frontmatter for metadata, Markdown body for documentation.
 
 ## Quick Start
 
 ### Prerequisites
-- [Go](https://go.dev/dl/) 1.24+
+- [Go](https://go.dev/dl/) 1.26+
 - [Node.js](https://nodejs.org/) 20+
 - Windows 10+ / macOS 13+ / Linux (WebView2/WebKitGTK)
 
@@ -92,7 +92,7 @@ internal/
 frontend/src/
 ├── app/                  # App shell, LandingPage, hooks
 ├── features/             # 12 feature components
-├── editor/               # CodeMirror 6, Live Preview, markdown renderer
+├── editor/               # Vditor, Live Preview, markdown renderer
 └── bindings/             # API types, HTTP bridge
 ```
 
@@ -100,7 +100,7 @@ frontend/src/
 
 | Feature | Description |
 |---------|-------------|
-| **Live Preview Editor** | CodeMirror 6 with inline Markdown syntax hiding (Obsidian-style). Ctrl+` to toggle. |
+| **Live Preview Editor** | Vditor with WYSIWYG / instant render / split preview modes. |
 | **Project Tree** | Search/filter, keyboard nav (↑↓←→), sort (tree/alpha/class/status), status dots, indent guides |
 | **3-Step Create Wizard** | Identity → Properties → Documents & Thumbnail, with live preview card |
 | **Collapsible Properties** | Sections: Identity, Relations, Attachments, Metadata. Inline editing on click. |
@@ -173,14 +173,14 @@ MyProject/
 
 | Layer | Technology |
 |-------|-----------|
-| Desktop Shell | [Wails 3](https://v3.wails.io/) |
+| Desktop Shell | [Wails v2](https://wails.io/) |
 | Frontend | React 19, TypeScript, Vite, Tailwind CSS |
-| Editor | CodeMirror 6 with custom Live Preview plugin |
-| Backend | Go 1.24, go-git/v5, yaml.v3 |
+| Editor | Vditor with WYSIWYG + instant render + split preview |
+| Backend | Go 1.26, go-git/v5, yaml.v3 |
 | State Machines | Custom FSM engine (7 state machines) |
 | IPC | HTTP JSON-RPC on localhost |
 | Versioning | Git (embedded via go-git/v5) |
 
 ## License
 
-MIT
+Apache 2.0
