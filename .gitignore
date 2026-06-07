@@ -3,17 +3,26 @@ node_modules/
 frontend/node_modules/
 
 # === Build output ===
+build/
 dist/
 frontend/dist/
 cmd/plm/frontend-dist/
 cmd/plm/frontend-dist2/
+*.exe
 
 # === Go ===
-*.exe
 *.test
 *.out
 *.prof
 vendor/
+go.work
+go.work.sum
+
+# === Coverage & Test ===
+coverage/
+coverage.out
+*.coverprofile
+test-results/
 
 # === IDE ===
 .idea/
@@ -24,33 +33,41 @@ vendor/
 .DS_Store
 Thumbs.db
 
-# === Logs ===
-*.log
-inbox/
-
 # === Secrets & Config ===
 *.hash
 *.env
 *.env.local
 config/admin.hash
+*.pem
+*.key
 
-# === Coverage & Test ===
-coverage/
-*.coverprofile
-test-results/
-
-# === Obsidian ===
-.obsidian/workspace.json
+# === Logs ===
+*.log
+inbox/
 
 # === Cache ===
 __pycache__/
 .cache/
+*.pyc
 
 # === Temp ===
 tmp/
 temp/
 *.tmp
 
+# === PLM runtime data (derived, rebuildable) ===
+.plm/index.db
+.plm/index.db-wal
+.plm/index.db-shm
+.plm/transactions/
+.plm/cache/
+
 # === OS ===
 Desktop.ini
 $RECYCLE.BIN/
+
+# === Obsidian ===
+.obsidian/workspace.json
+
+# === Docker ===
+docker-compose.override.yml
