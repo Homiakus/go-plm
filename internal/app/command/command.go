@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/Homiakus/go-plm/internal/api/dto"
@@ -34,6 +36,7 @@ type ObjectRepo interface {
 	DeleteObject(ctx context.Context, id object.ID) error
 	AppendHistory(ctx context.Context, id object.ID, line string) error
 	Exists(id object.ID) bool
+	ObjectDir(id object.ID) string // path to object directory
 }
 
 // Indexer abstracts index operations.
@@ -158,4 +161,70 @@ func (s *ObjectService) RebuildIndex(ctx context.Context) error {
 // CreateCheckpoint creates a git checkpoint.
 func (s *ObjectService) CreateCheckpoint(ctx context.Context, message string) (string, error) {
 	return s.Git.Checkpoint(ctx, message, "local-user")
+}
+
+// AttachArtifact copies a file into the object's files/ directory and updates the frontmatter.
+func (s *ObjectService) AttachArtifact(ctx context.Context, objectID string, localPath string, kind, role string) error {
+	obj, err := s.Repo.GetObject(ctx, object.ID(objectID))
+	if err != nil {
+		return fmt.Errorf("attach: get object: %w", err)
+	}
+
+	objDir := s.Repo.ObjectDir(object.ID(objectID))
+
+	// Determine target subdirectory based on kind
+	subDir := kind
+	switch kind {
+	case "cad":
+		subDir = "files/cad"
+	case "drawing":
+		subDir = "files/drawings"
+	case "manufacturing":
+		subDir = "files/manufacturing"
+	case "image":
+		subDir = "files/images"
+	case "certificate":
+		subDir = "files/certificates"
+	case "evidence":
+		subDir = "files/evidence"
+	default:
+		subDir = "files"
+	}
+
+	targetDir := filepath.Join(objDir, subDir)
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return fmt.Errorf("attach: mkdir: %w", err)
+	}
+
+	base := filepath.Base(localPath)
+	targetPath := filepath.Join(targetDir, base)
+
+	// Copy file
+	src, err := os.ReadFile(localPath)
+	if err != nil {
+		return fmt.Errorf("attach: read source: %w", err)
+	}
+	if err := os.WriteFile(targetPath, src, 0644); err != nil {
+		return fmt.Errorf("attach: write target: %w", err)
+	}
+
+	// Update object's artifact list
+	relPath, _ := filepath.Rel(objDir, targetPath)
+	obj.Artifacts = append(obj.Artifacts, object.ArtifactRef{
+		ID:           fmt.Sprintf("art-%s-%d", objectID, len(obj.Artifacts)+1),
+		Kind:         kind,
+		Role:         role,
+		Path:         relPath,
+		OriginalName: base,
+		Status:       "present",
+	})
+
+	if err := s.Repo.SaveObject(ctx, obj); err != nil {
+		return fmt.Errorf("attach: save object: %w", err)
+	}
+	if err := s.Index.UpsertObject(ctx, obj); err != nil {
+		return fmt.Errorf("attach: index: %w", err)
+	}
+
+	return nil
 }
