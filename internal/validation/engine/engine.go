@@ -20,25 +20,33 @@ type Rule interface {
 	Check(ctx context.Context, target Target) ([]diagnostic.Diagnostic, error)
 }
 
-// Registry stores all registered validation rules.
+// Registry stores all registered validation rules in registration order.
 type Registry struct {
-	rules map[string]Rule
+	rules []Rule
+	index map[string]int
 }
 
 // NewRegistry creates an empty rule registry.
 func NewRegistry() *Registry {
-	return &Registry{rules: make(map[string]Rule)}
+	return &Registry{
+		rules: make([]Rule, 0),
+		index: make(map[string]int),
+	}
 }
 
-// Register adds a rule to the registry.
+// Register adds a rule to the registry in order.
 func (r *Registry) Register(rule Rule) {
-	r.rules[rule.ID()] = rule
+	r.index[rule.ID()] = len(r.rules)
+	r.rules = append(r.rules, rule)
 }
 
 // Get retrieves a rule by ID.
 func (r *Registry) Get(id string) (Rule, bool) {
-	rule, ok := r.rules[id]
-	return rule, ok
+	idx, ok := r.index[id]
+	if !ok {
+		return nil, false
+	}
+	return r.rules[idx], true
 }
 
 // Engine executes validation rules.
@@ -51,7 +59,7 @@ func NewEngine(reg *Registry) *Engine {
 	return &Engine{Registry: reg}
 }
 
-// ValidateObject runs all registered rules against a single object.
+// ValidateObject runs all registered rules in registration order.
 func (e *Engine) ValidateObject(ctx context.Context, obj object.Object, all []object.Object) ([]diagnostic.Diagnostic, error) {
 	target := Target{Object: obj, AllObjects: all}
 	var allDiags []diagnostic.Diagnostic

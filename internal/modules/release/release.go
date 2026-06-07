@@ -91,51 +91,97 @@ func (s *Service) collectScope(ctx context.Context, id string, visited map[strin
 }
 
 // CheckReadiness verifies that all objects in the scope are ready for release.
+// Uses bounded worker pool (8 goroutines) for parallel object reads.
 func (s *Service) CheckReadiness(ctx context.Context, scope *Scope) (*Readiness, error) {
-	var blockers []diagnostic.Diagnostic
+	const workers = 8
+	sem := make(chan struct{}, workers)
+
+	type result struct {
+		id      string
+		blocker *diagnostic.Diagnostic
+	}
+	results := make(chan result, len(scope.Objects))
 
 	for _, id := range scope.Objects {
-		obj, err := s.Objects.GetObject(ctx, object.ID(id))
-		if err != nil {
-			blockers = append(blockers, diagnostic.Diagnostic{
-				ID: "rel-obj-not-found-" + id, Severity: diagnostic.Blocker,
-				Code: "OBJECT_NOT_FOUND", ObjectID: id,
-				Message: fmt.Sprintf("Object %s not found", id),
-			})
-			continue
-		}
-		if obj.State != object.StateApproved && obj.State != object.StateReleased {
-			blockers = append(blockers, diagnostic.Diagnostic{
-				ID: "rel-state-" + id, Severity: diagnostic.Blocker,
-				Code: "OBJECT_NOT_APPROVED", ObjectID: id,
-				Message: fmt.Sprintf("Object %s is in state %s (must be approved or released)", id, obj.State),
-			})
+		sem <- struct{}{}
+		go func(oid string) {
+			defer func() { <-sem }()
+			obj, err := s.Objects.GetObject(ctx, object.ID(oid))
+			if err != nil {
+				results <- result{oid, &diagnostic.Diagnostic{
+					ID: "rel-obj-not-found-" + oid, Severity: diagnostic.Blocker,
+					Code: "OBJECT_NOT_FOUND", ObjectID: oid,
+					Message: fmt.Sprintf("Object %s not found", oid),
+				}}
+				return
+			}
+			if obj.State != object.StateApproved && obj.State != object.StateReleased {
+				results <- result{oid, &diagnostic.Diagnostic{
+					ID: "rel-state-" + oid, Severity: diagnostic.Blocker,
+					Code: "OBJECT_NOT_APPROVED", ObjectID: oid,
+					Message: fmt.Sprintf("Object %s is in state %s (must be approved or released)", oid, obj.State),
+				}}
+				return
+			}
+			results <- result{oid, nil}
+		}(id)
+	}
+	// Drain semaphore
+	for i := 0; i < workers; i++ {
+		sem <- struct{}{}
+	}
+	close(results)
+
+	var blockers []diagnostic.Diagnostic
+	for r := range results {
+		if r.blocker != nil {
+			blockers = append(blockers, *r.blocker)
 		}
 	}
 
-	return &Readiness{
-		Ready:    len(blockers) == 0,
-		Blockers: blockers,
-	}, nil
+	return &Readiness{Ready: len(blockers) == 0, Blockers: blockers}, nil
 }
 
 // GenerateManifest creates a release manifest from a scope.
+// Uses bounded worker pool (8 goroutines) for parallel object reads.
 func (s *Service) GenerateManifest(ctx context.Context, releaseID string, scope *Scope) (*Manifest, error) {
-	manifest := &Manifest{
+	const workers = 8
+	sem := make(chan struct{}, workers)
+
+	type entry struct {
+		idx int
+		mo  ManifestObject
+	}
+	entries := make(chan entry, len(scope.Objects))
+
+	for i, id := range scope.Objects {
+		sem <- struct{}{}
+		go func(idx int, oid string) {
+			defer func() { <-sem }()
+			mo := ManifestObject{ID: oid}
+			obj, err := s.Objects.GetObject(ctx, object.ID(oid))
+			if err == nil {
+				mo.Class = string(obj.Class)
+				mo.State = string(obj.State)
+			}
+			entries <- entry{idx, mo}
+		}(i, id)
+	}
+	for i := 0; i < workers; i++ {
+		sem <- struct{}{}
+	}
+	close(entries)
+
+	// Sort back to original order
+	manifestObjects := make([]ManifestObject, len(scope.Objects))
+	for e := range entries {
+		manifestObjects[e.idx] = e.mo
+	}
+
+	return &Manifest{
 		ReleaseID:  releaseID,
 		RootObject: scope.RootID,
 		CreatedAt:  time.Now().UTC().Format(time.RFC3339),
-	}
-
-	for _, id := range scope.Objects {
-		obj, err := s.Objects.GetObject(ctx, object.ID(id))
-		mo := ManifestObject{ID: id}
-		if err == nil {
-			mo.Class = string(obj.Class)
-			mo.State = string(obj.State)
-		}
-		manifest.Objects = append(manifest.Objects, mo)
-	}
-
-	return manifest, nil
+		Objects:    manifestObjects,
+	}, nil
 }

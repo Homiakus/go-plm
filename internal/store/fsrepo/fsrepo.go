@@ -100,6 +100,7 @@ func (r *Repository) SaveObject(ctx context.Context, obj object.Object) error {
 }
 
 // ListObjects scans the objects/ directory and returns all objects.
+// Uses bounded worker pool (8 goroutines) for parallel file reads.
 func (r *Repository) ListObjects(ctx context.Context) ([]object.Object, []error) {
 	objDir := r.ObjectsDir()
 	entries, err := os.ReadDir(objDir)
@@ -110,26 +111,54 @@ func (r *Repository) ListObjects(ctx context.Context) ([]object.Object, []error)
 		return nil, []error{fmt.Errorf("fsrepo: read objects dir: %w", err)}
 	}
 
-	var objects []object.Object
-	var errs []error
-
+	// Collect valid object IDs first
+	var ids []object.ID
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
-
 		id := object.ID(entry.Name())
 		mdPath := r.ObjectPath(id)
 		if _, err := os.Stat(mdPath); os.IsNotExist(err) {
 			continue
 		}
+		ids = append(ids, id)
+	}
 
-		obj, err := r.GetObject(ctx, id)
-		if err != nil {
-			errs = append(errs, err)
-			continue
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	// Parallel reads with bounded concurrency
+	const workers = 8
+	sem := make(chan struct{}, workers)
+	type result struct {
+		obj object.Object
+		err error
+	}
+	results := make([]result, len(ids))
+
+	for i, id := range ids {
+		sem <- struct{}{}
+		go func(idx int, oid object.ID) {
+			defer func() { <-sem }()
+			obj, err := r.GetObject(ctx, oid)
+			results[idx] = result{obj, err}
+		}(i, id)
+	}
+	// Drain semaphore
+	for i := 0; i < workers; i++ {
+		sem <- struct{}{}
+	}
+
+	var objects []object.Object
+	var errs []error
+	for _, r := range results {
+		if r.err != nil {
+			errs = append(errs, r.err)
+		} else {
+			objects = append(objects, r.obj)
 		}
-		objects = append(objects, obj)
 	}
 
 	return objects, errs
