@@ -31,7 +31,7 @@ func TestGenerateAndAnalyzeProject(t *testing.T) {
 	os.MkdirAll(filepath.Join(root, ".plm"), 0755)
 	os.MkdirAll(filepath.Join(root, "config"), 0755)
 
-	os.WriteFile(filepath.Join(root, "project.yaml"), []byte(`project:
+	os.WriteFile(filepath.Join(root, "project.md"), []byte("---\n" + `project:
   code: demo
   title: "Demo Engineering Project"
   version: 1
@@ -56,9 +56,9 @@ storage:
 git:
   enabled: true
   release_tags: true
-`), 0644)
+` + "\n---\n\n# Demo Engineering Project\n\nTest project for PLM system verification.\n"), 0644)
 
-	lcYAML := []byte(`
+	lcYAML := []byte("---\n" + `
 initial: draft
 states: [draft, in_review, approved, released, blocked, obsolete, archived]
 transitions:
@@ -75,8 +75,8 @@ transitions:
   - name: revise
     from: [released]
     to: draft
-`)
-	os.WriteFile(filepath.Join(root, "config", "lifecycle.yaml"), lcYAML, 0644)
+` + "\n---\n")
+	os.WriteFile(filepath.Join(root, "config", "lifecycle.md"), lcYAML, 0644)
 
 	tx := transaction.NewManager(filepath.Join(root, ".plm", "transactions"))
 	repo := fsrepo.New(root, tx)
@@ -85,7 +85,15 @@ transitions:
 
 	nstore := naming.NewMemorySequenceStore(map[string]int{"prt": 0, "asm": 99, "drw": 0, "std": 0})
 	ngen := naming.NewGenerator("demo", nstore)
-	machine, _ := fsm.NewFromYAML(lcYAML)
+	machine, err := fsm.NewFromYAML(lcYAML)
+	if err != nil {
+		// Try parsing as frontmatter (strip --- delimiters)
+		doc, _ := frontmatter.Split(lcYAML)
+		machine, err = fsm.NewFromYAML(doc.Frontmatter)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	cmd := &command.ObjectService{Repo: repo, Index: idxDB, Naming: ngen, FSM: machine, Git: &mockGitSvc{}}
 	ctx := context.Background()

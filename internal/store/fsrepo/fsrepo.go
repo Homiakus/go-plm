@@ -44,7 +44,7 @@ func (r *Repository) ObjectPath(id object.ID) string {
 
 // HistoryPath returns the path to an object's history log.
 func (r *Repository) HistoryPath(id object.ID) string {
-	return filepath.Join(r.ObjectDir(id), "history.yaml.log")
+	return filepath.Join(r.ObjectDir(id), "history.jsonl")
 }
 
 // GetObject reads an object from disk by ID.

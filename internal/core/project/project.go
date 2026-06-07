@@ -44,7 +44,7 @@ type GitConfig struct {
 	ReleaseTags    bool `yaml:"release_tags" json:"release_tags"`
 }
 
-// Config is the full project configuration as stored in project.yaml.
+// Config is the full project configuration as stored in project.md (YAML frontmatter).
 type Config struct {
 	Project   Project      `yaml:"project" json:"project"`
 	Naming    NamingConfig `yaml:"naming" json:"naming"`

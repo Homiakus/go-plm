@@ -93,7 +93,7 @@ Object + Relation + Artifact + Process + Validation + Event + Projection
 
 ## 4.1. Входит в MVP (P0/P1)
 
-- Создание/открытие проекта (project.yaml + config/*.yaml)
+- Создание/открытие проекта (project.md + config/*.md с YAML frontmatter)
 - Создание инженерных объектов через Create Object Wizard
 - Markdown/YAML-редактор с Live Preview
 - Панель свойств (metadata panel)
@@ -153,7 +153,7 @@ Object + Relation + Artifact + Process + Validation + Event + Projection
 1. Пользователь открывает приложение → Landing Page
 2. Нажимает "Create New Project"
 3. Заполняет: project_code, project_title, project_path
-4. Система создаёт структуру директорий, project.yaml, config/*.yaml, инициализирует Git, создаёт initial commit
+4. Система создаёт структуру директорий, project.md, config/*.md, инициализирует Git, создаёт initial commit
 5. Система открывает workspace с пустым Project Tree
 
 ## UC-02: Создание детали внутри сборки
@@ -162,7 +162,7 @@ Object + Relation + Artifact + Process + Validation + Event + Projection
 3. Wizard: Identity (автогенерация ID) → Properties (material, thickness, etc.) → Documents & Attachments
 4. Preview показывает: ID, создаваемые файлы и папки, связи
 5. Пользователь подтверждает создание
-6. Система атомарно создаёт: директорию объекта, .md файл, history.yaml.log, копирует прикреплённые файлы, обновляет индекс
+6. Система атомарно создаёт: директорию объекта, .md файл, history.jsonl, копирует прикреплённые файлы, обновляет индекс
 7. Система автоматически добавляет связь `contains` в сборку
 
 ## UC-03: Проверка готовности к релизу
@@ -211,7 +211,7 @@ Object + Relation + Artifact + Process + Validation + Event + Projection
 | **Why Can't I Assistant** | UI-компонент, объясняющий причины невозможности действия (release, approve, etc.) |
 | **Projection** | Индексное представление данных для быстрых запросов (BOM projection, where-used projection) |
 | **Transaction** | Атомарная группа файловых операций с temp-файлами, fsync и atomic rename |
-| **Event** | Запись в history.yaml.log о факте изменения |
+| **Event** | Запись в history.jsonl о факте изменения |
 | **Command** | Операция, изменяющая состояние системы (CreateObject, RunTransition, etc.) |
 | **Query** | Операция, читающая состояние без изменений (GetObject, SearchObjects, etc.) |
 
@@ -220,7 +220,7 @@ Object + Relation + Artifact + Process + Validation + Event + Projection
 # 8. Принципы архитектуры
 
 ## 8.1. Files are Source of Truth
-MUST: все канонические данные хранятся в читаемых файлах (project.yaml, objects/*/item.json, objects/*/*.md, config/*.yaml). Система НЕ должна иметь скрытого состояния, невосстановимого из файлов.
+MUST: все канонические данные хранятся в читаемых Markdown-файлах с YAML frontmatter (project.md, objects/*/*.md, config/*.md). Никаких отдельных .yaml файлов. Система НЕ должна иметь скрытого состояния, невосстановимого из файлов.
 
 ## 8.2. Git-native
 MUST: Git используется для фиксации изменений, diff, checkpoint, release tags. Пользователь НЕ работает с git-командами напрямую — только через инженерные действия (Create Checkpoint, Show Changes, Compare with Release).
@@ -273,11 +273,11 @@ Project → Object → Relation → Artifact → Event → Diagnostic → IndexP
 - `naming.pattern` — шаблон ID
 - `sequences` — счётчики последовательностей по классам
 
-**YAML представление**: `project.yaml` в корне проекта.
+**Хранение**: `project.md` в корне проекта. YAML-конфигурация — в frontmatter, тело — описание проекта в Markdown.
 
 **Инварианты**:
 - project.code соответствует naming rules
-- config/*.yaml валидны
+- config/*.md валидны
 - все объекты имеют уникальные ID
 - индекс может быть пересобран из файлов
 
@@ -303,7 +303,7 @@ Project → Object → Relation → Artifact → Event → Diagnostic → IndexP
 **Инварианты**:
 - ID соответствует naming standard
 - ID совпадает с именем .md файла
-- class существует в classes.yaml
+- class существует в classes.md
 - state существует в lifecycle конфигурации
 - required metadata заполнены
 - relations указывают на существующие объекты
@@ -445,7 +445,7 @@ generation:
 - `object_id` — целевой объект
 - `payload` — данные события
 
-**Хранение**: `objects/[id]/history.yaml.log` — append-only файл.
+**Хранение**: `objects/[id]/history.jsonl` — append-only файл.
 
 **Формат**: одна JSON-строка на событие (JSONL), разделённая `
 `. Не YAML (несмотря на расширение `.yaml.log` — историческая причина, формат JSONL).
@@ -525,11 +525,11 @@ generation:
 
 ```
 MyProject/
-├── project.yaml                     # Конфигурация проекта
+├── project.md                       # Конфигурация проекта (YAML frontmatter)
 ├── objects/                         # Инженерные объекты
 │   └── a320-prt-0001-v1.0/
 │       ├── a320-prt-0001-v1.0.md    # Source of Truth: YAML frontmatter + Markdown body
-│       ├── history.yaml.log         # Append-only event log (JSONL)
+│       ├── history.jsonl            # Append-only event log (JSONL)
 │       ├── files/                   # Физические артефакты
 │       │   ├── cad/
 │       │   ├── drawings/
@@ -541,15 +541,15 @@ MyProject/
 │           ├── bom/
 │           ├── reports/
 │           └── exports/
-├── config/                          # Конфигурация проекта
-│   ├── classes.yaml
-│   ├── naming.yaml
-│   ├── lifecycle.yaml
-│   ├── validation.yaml
-│   ├── relation-types.yaml
-│   ├── file-routing.yaml
-│   └── exports.yaml
-├── templates/                       # Шаблоны
+├── config/                          # Конфигурация проекта (.md с YAML frontmatter)
+│   ├── classes.md
+│   ├── naming.md
+│   ├── lifecycle.md
+│   ├── validation.md
+│   ├── relation-types.md
+│   ├── file-routing.md
+│   └── exports.md
+├── templates/                       # Шаблоны (.md)
 │   ├── object/
 │   ├── project/
 │   ├── release/
@@ -570,7 +570,7 @@ MyProject/
 
 | Уровень | Описание | Пересобираем | Примеры |
 |---------|----------|-------------|---------|
-| **Canonical Source of Truth** | Данные, достаточные для полного восстановления проекта | Нет (это исходник) | project.yaml, objects/*/*.md, config/*.yaml, templates/*.md |
+| **Canonical Source of Truth** | Данные, достаточные для полного восстановления проекта | Нет (это исходник) | project.md, objects/*/*.md, config/*.md, templates/*.md |
 | **Physical Artifacts** | Бинарные/физические файлы | Нет (пользовательские) | .step, .pdf, .dxf, .png |
 | **Generated Files** | Сгенерированные документы | Да | generated/bom/*.yaml, generated/reports/*.md |
 | **Cache/Index** | Индексы и кэш | Да | .plm/index.db, .plm/cache/* |
@@ -578,8 +578,8 @@ MyProject/
 ## 10.3. Правила записи
 
 1. **MUST**: все записи Source of Truth проходят через transaction layer
-2. **MUST**: прямой overwrite .md/.yaml файлов без temp/backup запрещён
-3. **MUST**: history.yaml.log — append-only, никогда не перезаписывается
+2. **MUST**: прямой overwrite .md файлов без temp/backup запрещён
+3. **MUST**: history.jsonl — append-only, никогда не перезаписывается
 4. **SHOULD**: транзакции идемпотентны (operation_id)
 5. **MUST**: индексы обновляются в рамках той же транзакции или сразу после
 
@@ -593,8 +593,8 @@ MyProject/
 **Входные данные**: project_code, project_title, project_path, naming_standard, enabled_modules
 **Критерии приёмки**:
 1. Создана директория проекта
-2. Создан project.yaml с валидной конфигурацией
-3. Созданы config/*.yaml (classes, naming, lifecycle, validation, file-routing)
+2. Создан project.md с валидной конфигурацией
+3. Созданы config/*.md (classes, naming, lifecycle, validation, file-routing)
 4. Создана структура templates/
 5. Инициализирован Git-репозиторий (.git)
 6. Создан initial commit
@@ -602,9 +602,9 @@ MyProject/
 
 ### FR-PROJ-002. Открытие проекта
 **Приоритет**: P0 / MVP
-**Описание**: Система MUST открывать существующий проект: читать project.yaml, сканировать objects/, строить/обновлять индекс.
+**Описание**: Система MUST открывать существующий проект: читать project.md, сканировать objects/, строить/обновлять индекс.
 **Критерии приёмки**:
-1. project.yaml прочитан и провалидирован
+1. project.md прочитан и провалидирован
 2. Все объекты в objects/ просканированы
 3. Индекс синхронизирован с Source of Truth
 4. UI показывает Project Tree с объектами
@@ -614,8 +614,8 @@ MyProject/
 **Приоритет**: P1 / MVP
 **Описание**: Система MUST проверять целостность проекта.
 **Критерии приёмки**:
-1. Проверено наличие и валидность project.yaml
-2. Проверена валидность config/*.yaml
+1. Проверено наличие и валидность project.md
+2. Проверена валидность config/*.md
 3. Проверена валидность всех object records (ID, metadata, relations)
 4. Обнаружены битые связи (dangling relations)
 5. Обнаружены дубликаты ID
@@ -646,7 +646,7 @@ MyProject/
 1. Создана директория objects/[id]/
 2. Создан [id].md с YAML frontmatter и шаблонным Markdown body
 3. ID соответствует naming standard (section 16)
-4. Создан history.yaml.log с событием object.created
+4. Создан history.jsonl с событием object.created
 5. Объект появляется в индексе и Project Tree
 6. Автоматически созданы связи с parent object
 7. Прикреплённые файлы скопированы в objects/[id]/files/
@@ -657,7 +657,7 @@ MyProject/
 **Описание**: Система MUST позволять редактировать title, metadata, Markdown body, relations, artifacts.
 **Критерии приёмки**:
 1. Изменения сохраняются в .md (YAML frontmatter)
-2. Создаётся событие в history.yaml.log
+2. Создаётся событие в history.jsonl
 3. Индекс обновляется
 4. Autosave с debounce (5 секунд по умолчанию)
 
@@ -748,11 +748,11 @@ MyProject/
 
 ### FR-FSM-003. Transition History
 **Приоритет**: P0 / MVP
-**Описание**: Каждый переход MUST записываться в history.yaml.log.
+**Описание**: Каждый переход MUST записываться в history.jsonl.
 
 ### FR-FSM-004. Configurable FSM
 **Приоритет**: P0 / MVP
-**Описание**: FSM MUST задаваться через YAML (config/lifecycle.yaml).
+**Описание**: FSM MUST задаваться через config/lifecycle.md (YAML frontmatter).
 
 ---
 
@@ -860,7 +860,7 @@ MyProject/
 |----|-----------|-----------|
 | NFR-REL-01 | Все записи Source of Truth MUST быть атомарными (transaction layer) | P0 |
 | NFR-REL-02 | Запрещён прямой overwrite критичных файлов без temp/backup | P0 |
-| NFR-REL-03 | Все изменения MUST фиксироваться в history.yaml.log | P0 |
+| NFR-REL-03 | Все изменения MUST фиксироваться в history.jsonl | P0 |
 | NFR-REL-04 | Система MUST уметь восстановиться после прерванной транзакции | P1 |
 | NFR-REL-05 | Система MUST проверять целостность проекта при открытии | P1 |
 | NFR-REL-06 | Индекс MUST быть пересобираем из Source of Truth в любой момент | P0 |
@@ -901,9 +901,9 @@ MyProject/
 ## 12.5. Расширяемость
 
 - Новые модули MUST регистрироваться через стандартные интерфейсы (commands, queries, validators, views, templates, processes, exports)
-- Новые ObjectClass MUST добавляться через config/classes.yaml без изменения кода
-- Новые Relation Types MUST добавляться через config/relation-types.yaml
-- Новые Validation Rules MUST добавляться через config/validation.yaml и реализацию Rule interface
+- Новые ObjectClass MUST добавляться через config/classes.md без изменения кода
+- Новые Relation Types MUST добавляться через config/relation-types.md
+- Новые Validation Rules MUST добавляться через config/validation.md и реализацию Rule interface
 
 ---
 
@@ -1226,7 +1226,7 @@ type RefreshHints struct {
 3. app/command → validation.ValidateObject() (dry-run)
 4. app/command → store/transaction.Execute(plan) — атомарная запись
 5. app/command → store/index.UpsertObject() — обновление индекса
-6. app/command → history.Append(event) — запись в history.yaml.log
+6. app/command → history.Append(event) — запись в history.jsonl
 7. Response → Frontend с RefreshHints
 
 # 15. Модульная архитектура
@@ -1250,12 +1250,12 @@ type RefreshHints struct {
 | **core/object** | Доменная модель объекта | Object, ObjectID, Class, State | Чтение Markdown, запись YAML, SQLite, Git | — |
 | **core/relation** | Модель связи | Relation, RelationType | Проверка target object, where-used | — |
 | **core/artifact** | Модель артефакта | Artifact, Kind, Role, Status | Копирование, checksums, открытие файлов | — |
-| **core/event** | Модель события | Event, EventType | Запись history.yaml.log | — |
+| **core/event** | Модель события | Event, EventType | Запись history.jsonl | — |
 | **core/diagnostic** | Модель диагностики | Diagnostic, Severity | Исправление проблем | — |
 | **parser/frontmatter** | Разделение Markdown | Split/Join frontmatter + body | Валидация бизнес-правил | goldmark, yaml.v3 |
 | **parser/yamlx** | YAML encode/decode | Typed YAML | Graph validation | yaml.v3 |
 | **parser/markdown** | Markdown backend | Outline, links extraction | UI rendering | goldmark |
-| **naming** | Naming Standard v10 | Parse/Generate/Validate ID, Sequence store | Запись project.yaml | core/object |
+| **naming** | Naming Standard v10 | Parse/Generate/Validate ID, Sequence store | Запись project.md | core/object |
 | **store/fsrepo** | Файловый репозиторий | Чтение/сохранение объектов | BOM, FSM, Git, validation | core/*, store/transaction |
 | **store/transaction** | Атомарные операции | Plan, temp files, rename, fsync, recovery | — | — |
 | **store/index** | SQLite индекс | objects/relations/artifacts tables, FTS, projections | Считать себя source of truth | core/* |
@@ -1338,7 +1338,7 @@ SemVer-подобная схема: v[major].[minor]
 Для single-user режима (MVP) конфликты sequence невозможны.
 
 **Для future multi-user**: при конкурентном создании объектов одного класса используется оптимистическая блокировка:
-- `NextID()` атомарно инкрементирует sequence в project.yaml
+- `NextID()` атомарно инкрементирует sequence в project.md
 - При конфликте (sequence уже занят) — повторная попытка с новым sequence
 - Все операции создания идут через transaction layer с operation_id для идемпотентности
 
@@ -1876,7 +1876,7 @@ type Migration struct {
 
 - **Backend**: structured logging (slog) — level, module, operation_id, duration, error
 - **Frontend**: console.error для ошибок, debug mode для детального лога API-вызовов
-- **History**: все изменения в history.yaml.log (append-only JSONL)
+- **History**: все изменения в history.jsonl (append-only JSONL)
 
 ## 30.2. Diagnostics
 
@@ -1897,7 +1897,7 @@ type Migration struct {
 
 # 31. Конфигурация системы
 
-## 31.1. Project Config (project.yaml)
+## 31.1. Project Config (project.md)
 
 ```yaml
 project:
@@ -1931,7 +1931,7 @@ git:
   release_tags: true
 ```
 
-## 31.2. Object Classes (config/classes.yaml)
+## 31.2. Object Classes (config/classes.md)
 
 ```yaml
 classes:
@@ -1957,7 +1957,7 @@ classes:
     required_metadata: [std_class, std_id, make_buy]
 ```
 
-## 31.3. Lifecycle Config (config/lifecycle.yaml)
+## 31.3. Lifecycle Config (config/lifecycle.md)
 
 ```yaml
 processes:
@@ -1981,7 +1981,7 @@ processes:
       # ...
 ```
 
-## 31.4. Validation Config (config/validation.yaml)
+## 31.4. Validation Config (config/validation.md)
 
 ```yaml
 validators:
